@@ -56,6 +56,13 @@ endpoints: device code → token file, and `--renew` via the stored refresh toke
 JWTs are HS256 with the shared `SYNC_JWT_SECRET`; claims:
 `iss` = identity base URL, `sub` = `x:<x-user-id>`, `aud` = `ngp-sync`.
 
+> **Rotating `SYNC_JWT_SECRET` wipes sync, by design:** go-sync's per-account
+> keystore keys are HMAC-derived from the same secret, so after a rotation the
+> stored chains can no longer be decrypted and clients land in exponential
+> backoff against protocol errors (HTTP stays 200 — go-sync only logs 4xx/5xx,
+> so the server looks quiet). After rotating: `docker compose down -v`,
+> bring the stack back up, mint new tokens, and let clients re-upload.
+
 ## Deploy to GCP (Always Free e2-micro)
 
 **Deployed 2026-11-05:** project `ngp-sync-prod` (account or@supar.work, own
@@ -110,10 +117,15 @@ Expected cost: $0 plus possibly the external IPv4 fee (≈$3.65/mo worst case).
       when no token is cached — engine stuck at "Initializing"),
       PostBuffer-level token fallback, and a null-`SecurityEventRecorder`
       guard (startup CHECK-crash; safe browsing is compiled out).
-- [ ] Real X login: create the X developer app, set `X_CLIENT_ID/SECRET`
-      in `.env`, deploy to GCP (`provision/gcloud.sh`), switch the browser
-      token to one from `https://id.ngp.one`
+- [x] Deploy to GCP: `ngp-sync-prod` / `us-central1-a` / 136.113.152.163,
+      prod profile up with `DEV_MODE=0`; waiting on DNS A records at the
+      ngp.one registrar (GoDaddy) for Caddy to issue certs
+- [ ] Real X login: create the X developer app (callback
+      `https://id.ngp.one/callback`), set `X_CLIENT_ID/SECRET` in `.env`
+      on the VM, `docker compose --profile prod up -d identity`; then
+      `scripts/get-token.sh <device-code>` replaces the dev token
 - [ ] Hardening: refresh-token rotation + revocation UI, rate limiting,
       RS256/JWKS instead of shared secret if go-sync and identity ever
       live on different hosts; browser-side token refresh (the patch
-      currently reads one long-lived token)
+      currently reads one long-lived token); separate `KEYSTORE_SECRET`
+      from `SYNC_JWT_SECRET` so rotating tokens stops wiping sync data
