@@ -78,7 +78,14 @@ Expected cost: $0 plus possibly the external IPv4 fee (≈$3.65/mo worst case).
       engine at `--sync-url`, attaches the bearer token per request.
       Apply-validated against the full patch pipeline; needs a build to
       compile-test. Test with `./scripts/chromium-test.sh a` / `b`.
-- [ ] Phase 4 — build the browser; two-instance bookmark sync test
+- [x] Phase 4 — built locally (arm64, macOS 26.5 SDK) and verified:
+      two fresh instances against this stack sync bookmarks both ways
+      in 20-30s. Three browser-patch fixes landed from this test
+      (browser repo commit `6c90f78`): pre-cache the bearer token in
+      `SyncServerConnectionManager` (the scheduler drops every job
+      when no token is cached — engine stuck at "Initializing"),
+      PostBuffer-level token fallback, and a null-`SecurityEventRecorder`
+      guard (startup CHECK-crash; safe browsing is compiled out).
 - [ ] Real X login: create the X developer app, set `X_CLIENT_ID/SECRET`
       in `.env`, deploy to GCP (`provision/gcloud.sh`), switch the browser
       token to one from `https://id.ngp.one`
