@@ -65,11 +65,15 @@ JWTs are HS256 with the shared `SYNC_JWT_SECRET`; claims:
 
 ## Deploy to GCP (Always Free e2-micro)
 
-**Deployed 2026-11-05:** project `ngp-sync-prod` (account or@supar.work, own
-billing account), VM `ngp-sync` in `us-central1-a`, static IP
-**136.113.152.163**, stack running under the `prod` profile (`DEV_MODE=0`,
+**Deployed 2026-11-05:** project `ngp-sync-one` (account or@zelig.me,
+"Firebase Payment" billing account), VM `ngp-sync` in `us-central1-a`,
+static IP **34.46.4.190**, stack under the `prod` profile (`DEV_MODE=0`,
 same `SYNC_JWT_SECRET` as the laptop `.env`, X creds pending). Manage it with
-`gcloud --project ngp-sync-prod --account or@supar.work compute ssh ngp-sync --zone us-central1-a`.
+`gcloud --project ngp-sync-one --account or@zelig.me compute ssh ngp-sync --zone us-central1-a`.
+Note: an inherited org policy denies VM external IPs; the project carries a
+non-inheriting `compute.vmExternalIpAccess` policy allowing exactly this
+instance. (The earlier `ngp-sync-prod` project under or@supar.work was
+deleted — wrong account.)
 
 For a fresh deployment:
 
@@ -117,9 +121,9 @@ Expected cost: $0 plus possibly the external IPv4 fee (≈$3.65/mo worst case).
       when no token is cached — engine stuck at "Initializing"),
       PostBuffer-level token fallback, and a null-`SecurityEventRecorder`
       guard (startup CHECK-crash; safe browsing is compiled out).
-- [x] Deploy to GCP: `ngp-sync-prod` / `us-central1-a` / 136.113.152.163,
-      prod profile up with `DEV_MODE=0`; waiting on DNS A records at the
-      ngp.one registrar (GoDaddy) for Caddy to issue certs
+- [x] Deploy to GCP: `ngp-sync-one` (or@zelig.me) / `us-central1-a` /
+      34.46.4.190, prod profile up with `DEV_MODE=0`; waiting on DNS A
+      records at the ngp.one registrar (GoDaddy) for Caddy to issue certs
 - [ ] Real X login: create the X developer app (callback
       `https://id.ngp.one/callback`), set `X_CLIENT_ID/SECRET` in `.env`
       on the VM, `docker compose --profile prod up -d identity`; then
