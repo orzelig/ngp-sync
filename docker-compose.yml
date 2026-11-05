@@ -1,0 +1,103 @@
+name: ngp-sync
+
+# Local dev:   docker compose up -d --build        (reach go-sync on :8295, identity on :8300)
+# Production:  docker compose --profile prod up -d --build   (adds Caddy/TLS on 80/443)
+
+services:
+  gosync:
+    # Builds brave/go-sync straight from GitHub at the ref pinned in .env,
+    # using upstream's own Dockerfile (runtime stage is "artifact").
+    build:
+      context: https://github.com/brave/go-sync.git#${GO_SYNC_REF:-master}
+      target: artifact
+    restart: unless-stopped
+    depends_on:
+      dynamo-init:
+        condition: service_completed_successfully
+      redis:
+        condition: service_started
+    environment:
+      - ENV=local
+      - AWS_ACCESS_KEY_ID=GOSYNC          # dummy creds; dynamodb-local ignores them
+      - AWS_SECRET_ACCESS_KEY=GOSYNC
+      - AWS_REGION=us-west-2
+      - AWS_ENDPOINT=http://dynamo:8000
+      - TABLE_NAME=client-entity-dev      # must match gosync/table.json
+      - REDIS_URL=redis:6379
+    ports:
+      - "127.0.0.1:8295:8295"             # local access; Caddy proxies via the compose network
+
+  dynamo:
+    image: amazon/dynamodb-local:latest
+    restart: unless-stopped
+    user: root                            # named volume is root-owned; simplest fix on a single-user box
+    command: ["-jar", "DynamoDBLocal.jar", "-sharedDb", "-dbPath", "/data"]
+    environment:
+      - JAVA_TOOL_OPTIONS=-Xmx256m        # cap the JVM for the 1 GB e2-micro
+    volumes:
+      - dynamo_data:/data
+
+  dynamo-init:
+    # One-shot: creates the go-sync table if it doesn't exist, then exits.
+    image: amazon/aws-cli:latest
+    depends_on:
+      - dynamo
+    environment:
+      - AWS_ACCESS_KEY_ID=GOSYNC
+      - AWS_SECRET_ACCESS_KEY=GOSYNC
+      - AWS_DEFAULT_REGION=us-west-2
+    volumes:
+      - ./gosync/table.json:/table.json:ro
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        until aws dynamodb list-tables --endpoint-url http://dynamo:8000 >/dev/null 2>&1; do
+          echo "waiting for dynamodb-local..."; sleep 1
+        done
+        if aws dynamodb create-table --cli-input-json file:///table.json --endpoint-url http://dynamo:8000 >/dev/null 2>&1; then
+          echo "table created"
+        else
+          echo "table already exists (ok)"
+        fi
+
+  redis:
+    image: redis:6.2-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--maxmemory", "64mb", "--maxmemory-policy", "noeviction", "--save", "60", "1"]
+    volumes:
+      - redis_data:/data
+
+  identity:
+    build: ./identity
+    restart: unless-stopped
+    environment:
+      - BASE_URL=${IDENTITY_BASE_URL:-http://localhost:8300}
+      - X_CLIENT_ID=${X_CLIENT_ID:-}
+      - X_CLIENT_SECRET=${X_CLIENT_SECRET:-}
+      - SYNC_JWT_SECRET=${SYNC_JWT_SECRET:?set SYNC_JWT_SECRET in .env (openssl rand -hex 32)}
+    volumes:
+      - identity_data:/data
+    ports:
+      - "127.0.0.1:8300:8300"
+
+  caddy:
+    image: caddy:2-alpine
+    profiles: ["prod"]
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      - DOMAIN_SYNC=${DOMAIN_SYNC:-sync.ngp.one}
+      - DOMAIN_ID=${DOMAIN_ID:-id.ngp.one}
+    volumes:
+      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
+volumes:
+  dynamo_data:
+  redis_data:
+  identity_data:
+  caddy_data:
+  caddy_config:

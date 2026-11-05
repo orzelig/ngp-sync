@@ -1,0 +1,12 @@
+{
+	# Optional: set an email for Let's Encrypt expiry notices.
+	# email you@example.com
+}
+
+{$DOMAIN_SYNC} {
+	reverse_proxy gosync:8295
+}
+
+{$DOMAIN_ID} {
+	reverse_proxy identity:8300
+}
