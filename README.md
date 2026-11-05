@@ -65,15 +65,24 @@ Expected cost: $0 plus possibly the external IPv4 fee (≈$3.65/mo worst case).
 
 ## Roadmap
 
-- [x] Phase 1 — this scaffold: stock go-sync + identity skeleton
-- [ ] Phase 1b — validate deployed server with Brave (`SYNC_URL=https://sync.ngp.one/v2 ./scripts/brave-test.sh a`)
-- [ ] Phase 2 — fork go-sync: replace the Brave seed-signing auth middleware
-      with JWT verification (shared `SYNC_JWT_SECRET`, claims above), then
-      point `GO_SYNC_REF` at the fork. (This breaks Brave-client compatibility
-      by design — do it after Phase 1b passes.)
-- [ ] Phase 3 — ungoogled-chromium patches: sync URL default,
-      `SyncAuthManager` stub-account/token seam, token-paste setup UI
-      (see `../ungoogled-chromium-macos`)
+- [x] Phase 1 — this scaffold: go-sync + identity, running locally
+- [x] Phase 2 — JWT auth in go-sync (`gosync/0001-ngp-jwt-auth.patch`,
+      applied at image build): dual-mode (ngp JWTs + Brave seed tokens),
+      ClientID = sha256(subject), per-account derived keystore keys.
+      `DEV_MODE=1` + `POST /dev/seed` mints tokens without X. E2E verified
+      against `POST /v2/command/`.
+- [x] Phase 3 — browser patch (`ungoogled-chromium-macos` repo:
+      `patches/ungoogled-chromium/macos/ngp-sync.patch`):
+      `--ngp-sync-token(-file)` restores sync-service creation (ungoogled
+      stubs it), rides local-sync mode's account-free gating, points the
+      engine at `--sync-url`, attaches the bearer token per request.
+      Apply-validated against the full patch pipeline; needs a build to
+      compile-test. Test with `./scripts/chromium-test.sh a` / `b`.
+- [ ] Phase 4 — build the browser; two-instance bookmark sync test
+- [ ] Real X login: create the X developer app, set `X_CLIENT_ID/SECRET`
+      in `.env`, deploy to GCP (`provision/gcloud.sh`), switch the browser
+      token to one from `https://id.ngp.one`
 - [ ] Hardening: refresh-token rotation + revocation UI, rate limiting,
       RS256/JWKS instead of shared secret if go-sync and identity ever
-      live on different hosts
+      live on different hosts; browser-side token refresh (the patch
+      currently reads one long-lived token)
