@@ -121,9 +121,11 @@ Expected cost: $0 plus possibly the external IPv4 fee (≈$3.65/mo worst case).
       when no token is cached — engine stuck at "Initializing"),
       PostBuffer-level token fallback, and a null-`SecurityEventRecorder`
       guard (startup CHECK-crash; safe browsing is compiled out).
-- [x] Deploy to GCP: `ngp-sync-one` (or@zelig.me) / `us-central1-a` /
-      34.46.4.190, prod profile up with `DEV_MODE=0`; waiting on DNS A
-      records at the ngp.one registrar (GoDaddy) for Caddy to issue certs
+- [x] Deploy to GCP: `ngp-sync-one` (or@zelig.me, Or Zelig Supar billing) /
+      `us-central1-a` / 34.46.4.190, prod profile up with `DEV_MODE=0`.
+      Cloud E2E verified 2026-11-05: two browser instances synced bookmarks
+      both ways through the VM's go-sync (SSH tunnel, pre-DNS). Waiting on
+      DNS A records at the ngp.one registrar (GoDaddy) for Caddy certs
 - [ ] Real X login: create the X developer app (callback
       `https://id.ngp.one/callback`), set `X_CLIENT_ID/SECRET` in `.env`
       on the VM, `docker compose --profile prod up -d identity`; then
