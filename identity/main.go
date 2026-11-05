@@ -98,6 +98,10 @@ func main() {
 	mux.HandleFunc("POST /device/link", app.handleDeviceLink)
 	mux.HandleFunc("POST /token", app.handleToken)
 	mux.HandleFunc("GET /verify", app.handleVerify)
+	if os.Getenv("DEV_MODE") == "1" {
+		mux.HandleFunc("POST /dev/seed", app.handleDevSeed)
+		log.Printf("DEV_MODE=1: /dev/seed enabled — never set this in production")
+	}
 
 	log.Printf("identity service listening on %s (public base %s)", cfg.ListenAddr, cfg.BaseURL)
 	log.Fatal(http.ListenAndServe(cfg.ListenAddr, mux))
@@ -234,15 +238,19 @@ func (a *App) handleVerify(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(claims)
 }
 
-func (a *App) writeTokenResponse(w http.ResponseWriter, xid, refresh string) {
+func (a *App) mintAccessToken(xid string, ttl time.Duration) (string, error) {
 	now := time.Now()
-	tok, err := MintJWT(a.cfg.JWTSecret, Claims{
+	return MintJWT(a.cfg.JWTSecret, Claims{
 		Iss: a.cfg.BaseURL,
 		Sub: "x:" + xid,
 		Aud: jwtAudience,
 		Iat: now.Unix(),
-		Exp: now.Add(accessTokenTTL).Unix(),
+		Exp: now.Add(ttl).Unix(),
 	})
+}
+
+func (a *App) writeTokenResponseTTL(w http.ResponseWriter, xid, refresh string, ttl time.Duration) {
+	tok, err := a.mintAccessToken(xid, ttl)
 	if err != nil {
 		jsonError(w, http.StatusInternalServerError, "token mint failed")
 		return
@@ -251,13 +259,47 @@ func (a *App) writeTokenResponse(w http.ResponseWriter, xid, refresh string) {
 		"account_id":   "x:" + xid,
 		"access_token": tok,
 		"token_type":   "bearer",
-		"expires_in":   int(accessTokenTTL.Seconds()),
+		"expires_in":   int(ttl.Seconds()),
 	}
 	if refresh != "" {
 		out["refresh_token"] = refresh
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(out)
+}
+
+func (a *App) writeTokenResponse(w http.ResponseWriter, xid, refresh string) {
+	a.writeTokenResponseTTL(w, xid, refresh, accessTokenTTL)
+}
+
+// handleDevSeed is a DEV_MODE-only path to mint tokens without the X OAuth
+// flow, so the sync pipeline can be tested before X app credentials exist.
+func (a *App) handleDevSeed(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		XID      string `json:"x_id"`
+		Username string `json:"username"`
+		TTLDays  int    `json:"ttl_days"`
+	}
+	_ = json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&in) // all fields optional
+	if in.XID == "" {
+		in.XID = "dev1"
+	}
+	if in.Username == "" {
+		in.Username = "devuser"
+	}
+	if in.TTLDays <= 0 {
+		in.TTLDays = 30
+	}
+	if err := a.store.UpsertUser(in.XID, in.Username); err != nil {
+		jsonError(w, http.StatusInternalServerError, "storage error")
+		return
+	}
+	refresh, err := a.store.IssueRefreshToken(in.XID, "dev-seed")
+	if err != nil {
+		jsonError(w, http.StatusInternalServerError, "storage error")
+		return
+	}
+	a.writeTokenResponseTTL(w, in.XID, refresh, time.Duration(in.TTLDays)*24*time.Hour)
 }
 
 func (a *App) janitor() {

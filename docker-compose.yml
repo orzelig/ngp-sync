@@ -5,11 +5,13 @@ name: ngp-sync
 
 services:
   gosync:
-    # Builds brave/go-sync straight from GitHub at the ref pinned in .env,
-    # using upstream's own Dockerfile (runtime stage is "artifact").
+    # Builds brave/go-sync at the ref pinned in .env with the ngp JWT-auth
+    # patch applied (gosync/Dockerfile + gosync/0001-ngp-jwt-auth.patch).
+    # Dual-mode auth: ngp JWTs and Brave-style tokens both work.
     build:
-      context: https://github.com/brave/go-sync.git#${GO_SYNC_REF:-master}
-      target: artifact
+      context: ./gosync
+      args:
+        GO_SYNC_REF: ${GO_SYNC_REF:-master}
     restart: unless-stopped
     depends_on:
       dynamo-init:
@@ -24,6 +26,7 @@ services:
       - AWS_ENDPOINT=http://dynamo:8000
       - TABLE_NAME=client-entity-dev      # must match gosync/table.json
       - REDIS_URL=redis:6379
+      - SYNC_JWT_SECRET=${SYNC_JWT_SECRET:?set SYNC_JWT_SECRET in .env (openssl rand -hex 32)}
     ports:
       - "127.0.0.1:8295:8295"             # local access; Caddy proxies via the compose network
 
@@ -75,6 +78,7 @@ services:
       - X_CLIENT_ID=${X_CLIENT_ID:-}
       - X_CLIENT_SECRET=${X_CLIENT_SECRET:-}
       - SYNC_JWT_SECRET=${SYNC_JWT_SECRET:?set SYNC_JWT_SECRET in .env (openssl rand -hex 32)}
+      - DEV_MODE=${DEV_MODE:-0}           # 1 enables POST /dev/seed — local testing only
     volumes:
       - identity_data:/data
     ports:

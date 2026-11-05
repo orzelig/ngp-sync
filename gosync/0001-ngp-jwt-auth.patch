@@ -1,0 +1,288 @@
+diff --git a/auth/auth.go b/auth/auth.go
+index 5610d14..d7dba2d 100644
+--- a/auth/auth.go
++++ b/auth/auth.go
+@@ -106,6 +106,16 @@ func Authorize(r *http.Request) (string, error) {
+ 		return "", errors.New("not a valid token")
+ 	}
+ 
++	// ngp-sync: JWTs from the identity service are accepted when
++	// SYNC_JWT_SECRET is configured; Brave-style tokens still work.
++	if secret := JWTSecret(); secret != nil && looksLikeJWT(token) {
++		clientID, err := authenticateJWT(secret, token)
++		if err != nil {
++			return "", fmt.Errorf("error authorizing jwt: %w", err)
++		}
++		return clientID, nil
++	}
++
+ 	// Verify token
+ 	clientID, err := authenticate(token)
+ 	if err != nil {
+diff --git a/auth/jwt.go b/auth/jwt.go
+new file mode 100644
+index 0000000..86e8f7c
+--- /dev/null
++++ b/auth/jwt.go
+@@ -0,0 +1,87 @@
++package auth
++
++// ngp-sync: accept HS256 JWTs minted by the ngp identity service alongside
++// Brave's seed-signed tokens. Enabled by setting SYNC_JWT_SECRET.
++
++import (
++	"crypto/hmac"
++	"crypto/sha256"
++	"encoding/base64"
++	"encoding/hex"
++	"encoding/json"
++	"errors"
++	"os"
++	"strings"
++	"time"
++)
++
++const jwtAudience = "ngp-sync"
++
++type jwtClaims struct {
++	Iss string `json:"iss"`
++	Sub string `json:"sub"` // "x:<x-user-id>"
++	Aud string `json:"aud"`
++	Iat int64  `json:"iat"`
++	Exp int64  `json:"exp"`
++}
++
++// JWTSecret returns the shared HS256 secret, or nil when JWT auth is disabled.
++func JWTSecret() []byte {
++	if s := os.Getenv("SYNC_JWT_SECRET"); s != "" {
++		return []byte(s)
++	}
++	return nil
++}
++
++// looksLikeJWT reports whether a bearer token has JWT shape; Brave's token
++// format is base64(hex|hex|hex) and never contains dots.
++func looksLikeJWT(tkn string) bool { return strings.Count(tkn, ".") == 2 }
++
++// authenticateJWT verifies the token and maps its subject to a sync ClientID.
++// All devices presenting the same subject share one ClientID, which is what
++// makes them one sync chain.
++func authenticateJWT(secret []byte, tkn string) (string, error) {
++	parts := strings.Split(tkn, ".")
++	if len(parts) != 3 {
++		return "", errors.New("malformed jwt")
++	}
++	mac := hmac.New(sha256.New, secret)
++	mac.Write([]byte(parts[0] + "." + parts[1]))
++	sig, err := base64.RawURLEncoding.DecodeString(parts[2])
++	if err != nil {
++		return "", errors.New("bad jwt signature encoding")
++	}
++	if !hmac.Equal(sig, mac.Sum(nil)) {
++		return "", errors.New("jwt signature mismatch")
++	}
++	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
++	if err != nil {
++		return "", errors.New("bad jwt payload encoding")
++	}
++	var c jwtClaims
++	if err := json.Unmarshal(payload, &c); err != nil {
++		return "", err
++	}
++	if time.Now().Unix() >= c.Exp {
++		return "", errors.New("jwt expired")
++	}
++	if c.Aud != jwtAudience {
++		return "", errors.New("jwt wrong audience")
++	}
++	if c.Sub == "" {
++		return "", errors.New("jwt empty subject")
++	}
++	// Same keyspace shape as Brave's ClientIDs (64 hex chars).
++	id := sha256.Sum256([]byte("ngp-client-id|" + c.Sub))
++	return hex.EncodeToString(id[:]), nil
++}
++
++// KeystoreKeyForClient derives a stable per-account keystore key so standard
++// Chromium keystore encryption works without client-side changes. Derived,
++// not stored: rotating SYNC_JWT_SECRET prevents NEW devices from joining an
++// existing chain (existing ones keep their local copy of the key).
++func KeystoreKeyForClient(secret []byte, clientID string) []byte {
++	mac := hmac.New(sha256.New, secret)
++	mac.Write([]byte("ngp-keystore-key|" + clientID))
++	return []byte(base64.StdEncoding.EncodeToString(mac.Sum(nil)))
++}
+diff --git a/auth/jwt_test.go b/auth/jwt_test.go
+new file mode 100644
+index 0000000..7cf20f9
+--- /dev/null
++++ b/auth/jwt_test.go
+@@ -0,0 +1,86 @@
++package auth
++
++import (
++	"crypto/hmac"
++	"crypto/sha256"
++	"encoding/base64"
++	"fmt"
++	"net/http/httptest"
++	"strings"
++	"testing"
++	"time"
++)
++
++func mintTestJWT(t *testing.T, secret []byte, sub, aud string, exp time.Time) string {
++	t.Helper()
++	enc := base64.RawURLEncoding
++	header := enc.EncodeToString([]byte(`{"alg":"HS256","typ":"JWT"}`))
++	payload := enc.EncodeToString([]byte(fmt.Sprintf(
++		`{"iss":"test","sub":"%s","aud":"%s","iat":%d,"exp":%d}`,
++		sub, aud, time.Now().Unix(), exp.Unix())))
++	mac := hmac.New(sha256.New, secret)
++	mac.Write([]byte(header + "." + payload))
++	return header + "." + payload + "." + enc.EncodeToString(mac.Sum(nil))
++}
++
++func authorizeWithBearer(t *testing.T, token string) (string, error) {
++	t.Helper()
++	req := httptest.NewRequest("POST", "/v2/command", nil)
++	req.Header.Set("Authorization", "Bearer "+token)
++	return Authorize(req)
++}
++
++func TestAuthorizeJWT(t *testing.T) {
++	secret := "test-secret"
++	t.Setenv("SYNC_JWT_SECRET", secret)
++
++	// Valid token → 64-hex ClientID, stable across calls.
++	tok := mintTestJWT(t, []byte(secret), "x:42", jwtAudience, time.Now().Add(time.Hour))
++	id1, err := authorizeWithBearer(t, tok)
++	if err != nil || len(id1) != 64 {
++		t.Fatalf("valid jwt rejected: id=%q err=%v", id1, err)
++	}
++	id2, _ := authorizeWithBearer(t, mintTestJWT(t, []byte(secret), "x:42", jwtAudience, time.Now().Add(2*time.Hour)))
++	if id1 != id2 {
++		t.Fatalf("ClientID not stable for same subject: %q vs %q", id1, id2)
++	}
++
++	// Different subject → different chain.
++	id3, _ := authorizeWithBearer(t, mintTestJWT(t, []byte(secret), "x:43", jwtAudience, time.Now().Add(time.Hour)))
++	if id3 == id1 {
++		t.Fatal("different subjects must not share a ClientID")
++	}
++
++	// Expired, wrong audience, wrong key, tampered → all rejected.
++	bad := []string{
++		mintTestJWT(t, []byte(secret), "x:42", jwtAudience, time.Now().Add(-time.Minute)),
++		mintTestJWT(t, []byte(secret), "x:42", "other-aud", time.Now().Add(time.Hour)),
++		mintTestJWT(t, []byte("wrong-secret"), "x:42", jwtAudience, time.Now().Add(time.Hour)),
++		strings.Replace(tok, ".", ".A", 1),
++	}
++	for i, b := range bad {
++		if id, err := authorizeWithBearer(t, b); err == nil || id != "" {
++			t.Fatalf("bad token %d accepted: id=%q", i, id)
++		}
++	}
++}
++
++func TestLegacyPathUntouchedWithoutDots(t *testing.T) {
++	t.Setenv("SYNC_JWT_SECRET", "test-secret")
++	// Dot-free garbage must fall through to (and fail) the Brave-style path.
++	if id, err := authorizeWithBearer(t, "bm90LWEtand0"); err == nil || id != "" {
++		t.Fatalf("garbage accepted: id=%q err=%v", id, err)
++	}
++}
++
++func TestKeystoreKeyDerivation(t *testing.T) {
++	k1 := KeystoreKeyForClient([]byte("s"), "client-a")
++	k2 := KeystoreKeyForClient([]byte("s"), "client-a")
++	k3 := KeystoreKeyForClient([]byte("s"), "client-b")
++	if string(k1) != string(k2) {
++		t.Fatal("keystore key not deterministic")
++	}
++	if string(k1) == string(k3) {
++		t.Fatal("keystore key must differ per client")
++	}
++}
+diff --git a/command/command.go b/command/command.go
+index 58bed7c..be405e4 100644
+--- a/command/command.go
++++ b/command/command.go
+@@ -9,6 +9,7 @@ import (
+ 	"github.com/aws/aws-sdk-go-v2/aws"
+ 	"github.com/rs/zerolog/log"
+ 
++	"github.com/brave/go-sync/auth"
+ 	"github.com/brave/go-sync/cache"
+ 	"github.com/brave/go-sync/datastore"
+ 	"github.com/brave/go-sync/schema/protobuf/sync_pb"
+@@ -121,14 +122,20 @@ func progressMarkerToken(fromProgressMarker *sync_pb.DataTypeProgressMarker) []b
+ 	return token
+ }
+ 
+-func maybeSetNigoriEncryptionKeys(guRsp *sync_pb.GetUpdatesResponse, dataTypeID int32, isNewClient bool) {
++func maybeSetNigoriEncryptionKeys(guRsp *sync_pb.GetUpdatesResponse, dataTypeID int32, isNewClient bool, clientID string) {
+ 	if dataTypeID != nigoriTypeID || !isNewClient {
+ 		return
+ 	}
++	guRsp.EncryptionKeys = make([][]byte, 1)
++	// ngp-sync: serve a real per-account keystore key so stock Chromium
++	// keystore encryption works end to end.
++	if secret := auth.JWTSecret(); secret != nil {
++		guRsp.EncryptionKeys[0] = auth.KeystoreKeyForClient(secret, clientID)
++		return
++	}
+ 	// Bypassing chromium's restriction here, our server won't provide the
+ 	// initial encryption keys like chromium does, this will be overwritten
+ 	// by our client.
+-	guRsp.EncryptionKeys = make([][]byte, 1)
+ 	guRsp.EncryptionKeys[0] = []byte("1234")
+ }
+ 
+@@ -209,7 +216,7 @@ func processGetUpdatesForType(
+ 		Token:      progressMarkerToken(fromProgressMarker),
+ 	}
+ 
+-	maybeSetNigoriEncryptionKeys(guRsp, *fromProgressMarker.DataTypeId, isNewClient)
++	maybeSetNigoriEncryptionKeys(guRsp, *fromProgressMarker.DataTypeId, isNewClient, clientID)
+ 
+ 	// No need to get updates for this type because we already reach the
+ 	// maximum GetUpdates size for this request. Continue to next type instead
+diff --git a/command/get_updates_helpers_test.go b/command/get_updates_helpers_test.go
+index 10aa97e..c240df9 100644
+--- a/command/get_updates_helpers_test.go
++++ b/command/get_updates_helpers_test.go
+@@ -46,17 +46,30 @@ func TestProgressMarkerToken(t *testing.T) {
+ 
+ func TestMaybeSetNigoriEncryptionKeys(t *testing.T) {
+ 	rsp := &sync_pb.GetUpdatesResponse{}
+-	maybeSetNigoriEncryptionKeys(rsp, nigoriTypeID, false)
++	maybeSetNigoriEncryptionKeys(rsp, nigoriTypeID, false, "client")
+ 	assert.Nil(t, rsp.EncryptionKeys)
+ 
+-	maybeSetNigoriEncryptionKeys(rsp, 32904, true)
++	maybeSetNigoriEncryptionKeys(rsp, 32904, true, "client")
+ 	assert.Nil(t, rsp.EncryptionKeys)
+ 
+-	maybeSetNigoriEncryptionKeys(rsp, nigoriTypeID, true)
++	maybeSetNigoriEncryptionKeys(rsp, nigoriTypeID, true, "client")
+ 	require.Len(t, rsp.EncryptionKeys, 1)
+ 	assert.Equal(t, []byte("1234"), rsp.EncryptionKeys[0])
+ }
+ 
++func TestMaybeSetNigoriEncryptionKeysJWTMode(t *testing.T) {
++	t.Setenv("SYNC_JWT_SECRET", "test-secret")
++	rsp := &sync_pb.GetUpdatesResponse{}
++	maybeSetNigoriEncryptionKeys(rsp, nigoriTypeID, true, "client-a")
++	require.Len(t, rsp.EncryptionKeys, 1)
++	assert.NotEqual(t, []byte("1234"), rsp.EncryptionKeys[0])
++
++	// Deterministic per client.
++	rsp2 := &sync_pb.GetUpdatesResponse{}
++	maybeSetNigoriEncryptionKeys(rsp2, nigoriTypeID, true, "client-a")
++	assert.Equal(t, rsp.EncryptionKeys[0], rsp2.EncryptionKeys[0])
++}
++
+ func TestAppendGetUpdatesEntities(t *testing.T) {
+ 	mtime := int64(42)
+ 	entities := []datastore.SyncEntity{{
