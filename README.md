@@ -44,14 +44,27 @@ Logs: `docker compose logs -f gosync`.
 |---------------------|-------------------------------------------------------------------|
 | `GET /login`        | redirects to X authorization                                      |
 | `GET /callback`     | X redirect target; shows a one-time device-link code (10 min, single use) |
-| `POST /device/link` | `{"code","device"}` → `{account_id, refresh_token, access_token}` |
-| `POST /token`       | `{"refresh_token"}` → fresh 15-min access JWT                     |
+| `POST /device/link` | `{"code","device","ttl_days"?}` → `{account_id, refresh_token, access_token}` |
+| `POST /token`       | `{"refresh_token","ttl_days"?}` → fresh access JWT                |
+
+`ttl_days` (optional, clamped to 90) mints a long-lived access token — the
+browser patch reads one static token from a file and has no refresh loop yet.
+Without it, access tokens last 15 minutes. `scripts/get-token.sh` wraps both
+endpoints: device code → token file, and `--renew` via the stored refresh token.
 | `GET /verify`       | `Authorization: Bearer <jwt>` → claims (same check go-sync will do) |
 
 JWTs are HS256 with the shared `SYNC_JWT_SECRET`; claims:
 `iss` = identity base URL, `sub` = `x:<x-user-id>`, `aud` = `ngp-sync`.
 
 ## Deploy to GCP (Always Free e2-micro)
+
+**Deployed 2026-11-05:** project `ngp-sync-prod` (account or@supar.work, own
+billing account), VM `ngp-sync` in `us-central1-a`, static IP
+**136.113.152.163**, stack running under the `prod` profile (`DEV_MODE=0`,
+same `SYNC_JWT_SECRET` as the laptop `.env`, X creds pending). Manage it with
+`gcloud --project ngp-sync-prod --account or@supar.work compute ssh ngp-sync --zone us-central1-a`.
+
+For a fresh deployment:
 
 1. `PROJECT=<your-project> ./provision/gcloud.sh` — creates static IP,
    firewall, VM; prints the DNS records to create for `ngp.one`.
@@ -62,6 +75,17 @@ JWTs are HS256 with the shared `SYNC_JWT_SECRET`; claims:
    (adds 2 GB swap, installs Docker, `docker compose --profile prod up -d`).
 
 Expected cost: $0 plus possibly the external IPv4 fee (≈$3.65/mo worst case).
+
+## Everyday use
+
+```sh
+# once: log in at https://id.ngp.one/login, then turn the code into a token
+./scripts/get-token.sh <device-code>        # writes .ngp-sync-token (30 days)
+./scripts/chromium-ngp.sh                   # browser against sync.ngp.one
+./scripts/get-token.sh --renew              # new token later, no X login
+
+./scripts/chromium-ngp.sh --local           # against the laptop stack instead
+```
 
 ## Roadmap
 

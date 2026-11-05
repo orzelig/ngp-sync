@@ -178,6 +178,10 @@ func (a *App) handleDeviceLink(w http.ResponseWriter, r *http.Request) {
 	var in struct {
 		Code   string `json:"code"`
 		Device string `json:"device"`
+		// Optional: access-token lifetime in days (clamped to 90). The browser
+		// patch reads one static token from a file and has no refresh loop yet,
+		// so device linking can mint a long-lived token directly.
+		TTLDays int `json:"ttl_days"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&in); err != nil {
 		jsonError(w, http.StatusBadRequest, "bad request body")
@@ -199,12 +203,13 @@ func (a *App) handleDeviceLink(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusInternalServerError, "storage error")
 		return
 	}
-	a.writeTokenResponse(w, entry.XID, refresh)
+	a.writeTokenResponseTTL(w, entry.XID, refresh, clampTTLDays(in.TTLDays))
 }
 
 func (a *App) handleToken(w http.ResponseWriter, r *http.Request) {
 	var in struct {
 		RefreshToken string `json:"refresh_token"`
+		TTLDays      int    `json:"ttl_days"` // optional, clamped to 90 days
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&in); err != nil {
 		jsonError(w, http.StatusBadRequest, "bad request body")
@@ -215,7 +220,19 @@ func (a *App) handleToken(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusUnauthorized, "unknown refresh token")
 		return
 	}
-	a.writeTokenResponse(w, xid, "")
+	a.writeTokenResponseTTL(w, xid, "", clampTTLDays(in.TTLDays))
+}
+
+// clampTTLDays maps an optional ttl_days request field to a token lifetime:
+// 0 (absent) keeps the short default; anything else is clamped to [1, 90] days.
+func clampTTLDays(days int) time.Duration {
+	if days <= 0 {
+		return accessTokenTTL
+	}
+	if days > 90 {
+		days = 90
+	}
+	return time.Duration(days) * 24 * time.Hour
 }
 
 func (a *App) handleVerify(w http.ResponseWriter, r *http.Request) {
