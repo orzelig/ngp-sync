@@ -3,3 +3,4 @@
 data/
 .ngp-sync-token*
 .dev-sync-token*
+.ngp-update-signing-key.pem

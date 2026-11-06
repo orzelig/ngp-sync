@@ -17,6 +17,7 @@ import (
 type User struct {
 	XID       string    `json:"x_id"`
 	Username  string    `json:"username"`
+	AvatarURL string    `json:"avatar_url,omitempty"`
 	CreatedAt time.Time `json:"created_at"`
 }
 
@@ -67,6 +68,10 @@ func (s *Store) save() error {
 }
 
 func (s *Store) UpsertUser(xid, username string) error {
+	return s.UpsertUserWithAvatar(xid, username, "")
+}
+
+func (s *Store) UpsertUserWithAvatar(xid, username, avatarURL string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	u, ok := s.Data.Users[xid]
@@ -74,8 +79,19 @@ func (s *Store) UpsertUser(xid, username string) error {
 		u = User{XID: xid, CreatedAt: time.Now().UTC()}
 	}
 	u.Username = username
+	if avatarURL != "" {
+		u.AvatarURL = avatarURL
+	}
 	s.Data.Users[xid] = u
 	return s.save()
+}
+
+// GetUser returns the stored user for an X id, if any.
+func (s *Store) GetUser(xid string) (User, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	u, ok := s.Data.Users[xid]
+	return u, ok
 }
 
 // IssueRefreshToken returns the plaintext token; only its hash is stored.

@@ -16,6 +16,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"html/template"
+	"image"
+	_ "image/gif"
+	_ "image/jpeg"
+	"image/png"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -98,6 +103,7 @@ func main() {
 	mux.HandleFunc("POST /device/link", app.handleDeviceLink)
 	mux.HandleFunc("POST /token", app.handleToken)
 	mux.HandleFunc("GET /verify", app.handleVerify)
+	mux.HandleFunc("GET /avatar/{xid}", app.handleAvatarPNG)
 	mux.HandleFunc("GET /linked", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		fmt.Fprint(w, `<!doctype html><meta charset="utf-8"><title>ngp-sync</title>`+
@@ -107,6 +113,7 @@ func main() {
 	if os.Getenv("DEV_MODE") == "1" {
 		mux.HandleFunc("POST /dev/seed", app.handleDevSeed)
 		mux.HandleFunc("GET /dev/enroll", app.handleDevEnroll)
+		mux.HandleFunc("GET /dev/avatar.png", handleDevAvatar)
 		log.Printf("DEV_MODE=1: /dev/seed and /dev/enroll enabled — never set this in production")
 	}
 
@@ -156,13 +163,13 @@ func (a *App) handleCallback(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "token exchange with X failed", http.StatusBadGateway)
 		return
 	}
-	xid, username, err := a.fetchXIdentity(ctx, xAccessToken)
+	xid, username, avatarURL, err := a.fetchXIdentity(ctx, xAccessToken)
 	if err != nil {
 		log.Printf("users/me: %v", err)
 		http.Error(w, "could not fetch X identity", http.StatusBadGateway)
 		return
 	}
-	if err := a.store.UpsertUser(xid, username); err != nil {
+	if err := a.store.UpsertUserWithAvatar(xid, username, avatarURL); err != nil {
 		log.Printf("store: %v", err)
 		http.Error(w, "storage error", http.StatusInternalServerError)
 		return
@@ -285,6 +292,16 @@ func (a *App) writeTokenResponseTTL(w http.ResponseWriter, xid, refresh string, 
 		"token_type":   "bearer",
 		"expires_in":   int(ttl.Seconds()),
 	}
+	if u, ok := a.store.GetUser(xid); ok {
+		out["username"] = u.Username
+		if u.AvatarURL != "" {
+			if strings.HasPrefix(u.AvatarURL, a.cfg.BaseURL) {
+				out["avatar_url"] = u.AvatarURL // dev: already a local PNG
+			} else {
+				out["avatar_url"] = a.cfg.BaseURL + "/avatar/" + xid
+			}
+		}
+	}
 	if refresh != "" {
 		out["refresh_token"] = refresh
 	}
@@ -334,7 +351,7 @@ func (a *App) handleDevEnroll(w http.ResponseWriter, r *http.Request) {
 	if xid == "" {
 		xid = "dev1"
 	}
-	if err := a.store.UpsertUser(xid, "devuser"); err != nil {
+	if err := a.store.UpsertUserWithAvatar(xid, "devuser", a.cfg.BaseURL+"/dev/avatar.png"); err != nil {
 		jsonError(w, http.StatusInternalServerError, "storage error")
 		return
 	}
@@ -366,6 +383,62 @@ func (a *App) janitor() {
 		}
 		a.mu.Unlock()
 	}
+}
+
+// handleAvatarPNG proxies the user's X profile image, re-encoded as PNG so
+// the browser's enrollment code needs only a PNG decoder. Served for linked
+// users only; no auth needed (avatars are public on X anyway).
+func (a *App) handleAvatarPNG(w http.ResponseWriter, r *http.Request) {
+	u, ok := a.store.GetUser(r.PathValue("xid"))
+	if !ok || u.AvatarURL == "" {
+		http.NotFound(w, r)
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.AvatarURL, nil)
+	if err != nil {
+		http.Error(w, "bad upstream url", http.StatusBadGateway)
+		return
+	}
+	resp, err := a.http.Do(req)
+	if err != nil {
+		http.Error(w, "avatar fetch failed", http.StatusBadGateway)
+		return
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		http.Error(w, "avatar fetch failed", http.StatusBadGateway)
+		return
+	}
+	img, _, err := image.Decode(io.LimitReader(resp.Body, 4<<20))
+	if err != nil {
+		http.Error(w, "avatar decode failed", http.StatusBadGateway)
+		return
+	}
+	w.Header().Set("Content-Type", "image/png")
+	w.Header().Set("Cache-Control", "public, max-age=86400")
+	_ = png.Encode(w, img)
+}
+
+// handleDevAvatar serves a tiny generated PNG so the browser's avatar
+// download path can be exercised without X.
+func handleDevAvatar(w http.ResponseWriter, _ *http.Request) {
+	img := image.NewRGBA(image.Rect(0, 0, 64, 64))
+	for i := range img.Pix {
+		switch i % 4 {
+		case 0:
+			img.Pix[i] = 0x1d // r
+		case 1:
+			img.Pix[i] = 0x9b // g
+		case 2:
+			img.Pix[i] = 0xf0 // b
+		default:
+			img.Pix[i] = 0xff // a
+		}
+	}
+	w.Header().Set("Content-Type", "image/png")
+	_ = png.Encode(w, img)
 }
 
 func jsonError(w http.ResponseWriter, code int, msg string) {

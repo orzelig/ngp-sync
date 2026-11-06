@@ -22,7 +22,7 @@ import (
 const (
 	xAuthorizeURL = "https://x.com/i/oauth2/authorize"
 	xTokenURL     = "https://api.x.com/2/oauth2/token"
-	xMeURL        = "https://api.x.com/2/users/me"
+	xMeURL        = "https://api.x.com/2/users/me?user.fields=profile_image_url"
 	// users.read requires tweet.read; offline.access is requested in case we
 	// later want to re-verify the X account server-side.
 	xScopes = "users.read tweet.read offline.access"
@@ -88,35 +88,38 @@ func (a *App) exchangeCode(ctx context.Context, code, verifier string) (string, 
 	return out.AccessToken, nil
 }
 
-func (a *App) fetchXIdentity(ctx context.Context, accessToken string) (id, username string, err error) {
+func (a *App) fetchXIdentity(ctx context.Context, accessToken string) (id, username, avatarURL string, err error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, xMeURL, nil)
 	if err != nil {
-		return "", "", err
+		return "", "", "", err
 	}
 	req.Header.Set("Authorization", "Bearer "+accessToken)
 
 	resp, err := a.http.Do(req)
 	if err != nil {
-		return "", "", err
+		return "", "", "", err
 	}
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if resp.StatusCode != http.StatusOK {
-		return "", "", fmt.Errorf("x users/me: %s: %s", resp.Status, snippet(body))
+		return "", "", "", fmt.Errorf("x users/me: %s: %s", resp.Status, snippet(body))
 	}
 	var out struct {
 		Data struct {
-			ID       string `json:"id"`
-			Username string `json:"username"`
+			ID              string `json:"id"`
+			Username        string `json:"username"`
+			ProfileImageURL string `json:"profile_image_url"`
 		} `json:"data"`
 	}
 	if err := json.Unmarshal(body, &out); err != nil {
-		return "", "", err
+		return "", "", "", err
 	}
 	if out.Data.ID == "" {
-		return "", "", errors.New("no user id in X response")
+		return "", "", "", errors.New("no user id in X response")
 	}
-	return out.Data.ID, out.Data.Username, nil
+	// X returns the _normal (48px) variant; strip the suffix for full size.
+	avatar := strings.Replace(out.Data.ProfileImageURL, "_normal.", "_400x400.", 1)
+	return out.Data.ID, out.Data.Username, avatar, nil
 }
 
 func snippet(b []byte) string {
