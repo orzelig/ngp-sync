@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow, noarchive">
+<title>NGP — Privacy Policy</title>
+<style>
+  :root { --orange:#EE5A05; --ink:#1b1b1f; --mut:#6b6b74; --bg:#fafafa; }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif;
+         background:var(--bg); color:var(--ink); line-height:1.65; }
+  main { max-width:720px; margin:0 auto; padding:48px 24px 80px; }
+  h1 { font-size:30px; margin-bottom:4px; }
+  .date { color:var(--mut); font-size:14px; margin-bottom:32px; }
+  h2 { font-size:19px; margin:28px 0 8px; }
+  p, li { font-size:15px; color:#333; margin-bottom:10px; }
+  ul { padding-left:22px; margin-bottom:10px; }
+  a { color:var(--orange); }
+  .top { font-size:14px; margin-bottom:24px; display:inline-block; }
+  @media (prefers-color-scheme: dark) {
+    :root { --ink:#ececf0; --mut:#9a9aa4; --bg:#131316; }
+    p, li { color:#c9c9d1; }
+  }
+</style>
+</head>
+<body>
+<main>
+<a class="top" href="/">← ngp.one</a>
+<h1>Privacy Policy</h1>
+<p class="date">Effective: November 6, 2026</p>
+
+<p>NGP ("<strong>we</strong>") operates the NGP browser and the ngp.one services. The short
+version: <strong>no ads, no analytics, no tracking, no selling or sharing of your data.</strong>
+We collect the minimum needed to run sign-in, sync, and updates.</p>
+
+<h2>What we collect</h2>
+<ul>
+<li><strong>X sign-in (only if you enable sync).</strong> When you log in with X we receive your
+public profile basics: X user id, handle, display name, and avatar. We do not
+receive your X password and we do not request your email.</li>
+<li><strong>Sync data (only if you enable sync).</strong> The browser data you choose to sync —
+such as bookmarks, history, passwords, open tabs, and settings — is stored on our
+servers so your devices can share it. It is encrypted in transit (TLS). For
+end-to-end encryption, set a sync passphrase in the browser; then we store data we
+cannot read.</li>
+<li><strong>Tokens and device links.</strong> We issue sign-in tokens to your browser (they
+expire; currently 30 days) and keep minimal records needed to operate them.</li>
+<li><strong>Server logs.</strong> Like any server, ours briefly logs technical details of requests
+(IP address, user agent, timestamps) for operations, debugging, and abuse
+prevention. Logs are routinely discarded.</li>
+<li><strong>Update checks.</strong> The browser periodically fetches a small static file from
+ngp.one to learn about new versions; the request carries no account identity.
+Downloads are served from GitHub, which sees the request like any website you
+visit.</li>
+</ul>
+
+<h2>What we don't collect</h2>
+<ul>
+<li>No browsing telemetry or analytics in the browser. Your browsing stays on your
+device unless you turn on sync — and then it goes only to our sync server, for you.</li>
+<li>The ngp.one website sets no cookies and runs no analytics.</li>
+</ul>
+
+<h2>Third parties</h2>
+<p>Sign-in uses X; installing extensions talks to Google's Chrome Web Store;
+downloads come from GitHub; our servers run on Google Cloud (us-central1) with TLS
+certificates from Let's Encrypt. Each handles data under its own privacy policy. We
+do not sell your data to anyone, and we share it with no one except these
+infrastructure providers as needed to run the Service.</p>
+
+<h2>Retention and deletion</h2>
+<p>Synced data and account records are kept while you use the Service. Turning off
+NGP sync in the browser removes its local credentials; to have your server-side
+data deleted, contact us (below) with your X handle and we will remove it. Tokens
+expire on their own. This is an early-stage service: we may also reset or delete
+stored sync data as part of maintenance — keep your own copies of anything
+important.</p>
+
+<h2>Security</h2>
+<p>Everything is served over TLS; access to servers is limited to the operator. No
+system is perfectly secure, and this is experimental software — do not store
+anything in sync whose loss or exposure you cannot afford, or use a sync
+passphrase.</p>
+
+<h2>Your choices</h2>
+<ul>
+<li>Sync is <strong>off by default</strong> — "Don't use sync" keeps the browser fully local.</li>
+<li>"Turn off NGP sync" in the profile menu disconnects the account.</li>
+<li>A sync passphrase makes synced data unreadable to us.</li>
+<li>You can request deletion of your server-side data at any time.</li>
+</ul>
+
+<h2>Children</h2>
+<p>The Service is not directed at children under 16, and we do not knowingly collect
+their data.</p>
+
+<h2>Changes</h2>
+<p>We may update this policy by posting a revised version here with a new effective
+date.</p>
+
+<h2>Contact</h2>
+<p>Privacy requests: open an issue at
+<a href="https://github.com/orzelig/ngp-releases/issues">github.com/orzelig/ngp-releases</a>
+(or request a private channel there and we will provide one).</p>
+</main>
+</body>
+</html>

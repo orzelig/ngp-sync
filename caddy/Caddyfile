@@ -4,15 +4,21 @@
 }
 
 {$DOMAIN_SYNC} {
+	header X-Robots-Tag "noindex, nofollow, noarchive"
+	respond /robots.txt "User-agent: *
+Disallow: /" 200
 	reverse_proxy gosync:8295
 }
 
 {$DOMAIN_ID} {
+	header X-Robots-Tag "noindex, nofollow, noarchive"
+	respond /robots.txt "User-agent: *
+Disallow: /" 200
 	reverse_proxy identity:8300
 }
 
 {$DOMAIN_ROOT} {
+	header X-Robots-Tag "noindex, nofollow, noarchive"
 	root * /srv/ngp
-	# Placeholder home until the real site exists.
 	file_server
 }
