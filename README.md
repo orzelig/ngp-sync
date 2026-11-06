@@ -126,10 +126,11 @@ Expected cost: $0 plus possibly the external IPv4 fee (≈$3.65/mo worst case).
       Production E2E verified 2026-11-05: DNS A records live, Let's
       Encrypt certs issued, and two browser instances synced bookmarks
       both ways through https://sync.ngp.one/v2
-- [ ] Real X login: create the X developer app (callback
-      `https://id.ngp.one/callback`), set `X_CLIENT_ID/SECRET` in `.env`
-      on the VM, `docker compose --profile prod up -d identity`; then
-      `scripts/get-token.sh <device-code>` replaces the dev token
+- [x] Real X login (2026-11-05): X app "NGP.one" (confidential Web App,
+      read-only scopes, callback `https://id.ngp.one/callback`), creds in
+      the VM `.env`. Full flow verified: X consent -> device code ->
+      `get-token.sh` -> 30-day token for the real account -> two browsers
+      synced bookmarks both ways through https://sync.ngp.one/v2
 - [ ] Hardening: refresh-token rotation + revocation UI, rate limiting,
       RS256/JWKS instead of shared secret if go-sync and identity ever
       live on different hosts; browser-side token refresh (the patch
