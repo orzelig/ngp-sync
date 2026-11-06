@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Launch the patched ungoogled-chromium against the ngp sync server.
+# Launch the patched NGP browser (ungoogled-chromium fork) against the ngp sync server.
 #
 #   ./scripts/chromium-test.sh a      # first instance
 #   ./scripts/chromium-test.sh b     # second instance (new terminal)
@@ -13,13 +13,13 @@ set -euo pipefail
 
 PROFILE="${1:-a}"
 DIR="$(cd "$(dirname "$0")/.." && pwd)"
-APP="${2:-${CHROMIUM_APP:-$DIR/../ungoogled-chromium-macos/build/src/out/Default/Chromium.app}}"
-BIN="$APP/Contents/MacOS/Chromium"
+APP="${2:-${NGP_APP:-${CHROMIUM_APP:-$DIR/../ungoogled-chromium-macos/build/src/out/Default/NGP.app}}}"
+BIN="$APP/Contents/MacOS/NGP"
 TOKEN_FILE="$DIR/.dev-sync-token"
 SYNC_URL="${SYNC_URL:-http://localhost:8295/v2}"
 
 if [ ! -x "$BIN" ]; then
-  echo "No Chromium binary at: $BIN"
+  echo "No NGP binary at: $BIN"
   echo "Build the browser first, or pass the .app path as the 2nd argument."
   exit 1
 fi

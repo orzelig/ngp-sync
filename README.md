@@ -1,6 +1,6 @@
 # ngp-sync
 
-Self-hosted Chromium sync backend for the ungoogled-chromium fork, with
+Self-hosted Chromium sync backend for NGP (the ungoogled-chromium fork), with
 "Log in with X" identity. The browser never talks to X — it only ever sees
 `sync.ngp.one` and a bearer token:
 
@@ -98,8 +98,8 @@ restarts with sync on. Enrollment only accepts user clicks originating on
 `id.ngp.one` pages.
 
 ```sh
-./scripts/chromium-ngp.sh                   # launch (profile ~/.ngp-chromium/main)
-./scripts/chromium-ngp.sh --local           # against the laptop stack instead
+./scripts/ngp.sh                            # launch (profile ~/.ngp-chromium/main)
+./scripts/ngp.sh --local                    # against the laptop stack instead
 ```
 
 Script-based tokens still work and take precedence when present:
