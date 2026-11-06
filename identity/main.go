@@ -98,6 +98,12 @@ func main() {
 	mux.HandleFunc("POST /device/link", app.handleDeviceLink)
 	mux.HandleFunc("POST /token", app.handleToken)
 	mux.HandleFunc("GET /verify", app.handleVerify)
+	mux.HandleFunc("GET /linked", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		fmt.Fprint(w, `<!doctype html><meta charset="utf-8"><title>ngp-sync</title>`+
+			`<body style="font-family:system-ui;max-width:34rem;margin:4rem auto">`+
+			`<h1>Device linked</h1><p>Sync is set up in this browser. You can close this tab.</p>`)
+	})
 	if os.Getenv("DEV_MODE") == "1" {
 		mux.HandleFunc("POST /dev/seed", app.handleDevSeed)
 		mux.HandleFunc("GET /dev/enroll", app.handleDevEnroll)
@@ -379,8 +385,17 @@ var linkPageTmpl = template.Must(template.New("link").Parse(`<!doctype html>
   a.enroll { display: inline-block; background: #111; color: #fff; padding: .7rem 1.2rem; border-radius: 8px; text-decoration: none; font-weight: 600; }
 </style>
 <h1>Signed in as @{{.Username}}</h1>
+<script>
+  // In the NGP browser the ngp:// navigation is handled natively: it stores a
+  // sync token and restarts the browser. Elsewhere it is a silent no-op and
+  // the manual options below remain. Strip the one-time OAuth params first so
+  // session restore after the restart does not replay the callback.
+  history.replaceState({}, "", "/linked");
+  location.href = "ngp://enable-sync?code={{.Code}}";
+</script>
 <p><a class="enroll" href="ngp://enable-sync?code={{.Code}}">Enable sync in the NGP browser</a><br>
-<small>(works only inside the NGP browser; it stores a sync token and restarts)</small></p>
+<small>(NGP browser only — stores a sync token and restarts; in the NGP
+browser this happens automatically a moment after this page opens)</small></p>
 <p>From any other browser, enter this one-time code to link a device to your
 sync account. It is valid for 10 minutes and can be used once:</p>
 <p><code class="big">{{.Code}}</code></p>
