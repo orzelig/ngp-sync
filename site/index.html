@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NGP Browser</title>
+<style>
+  :root {
+    --orange: #EE5A05; --orange-hi: #FF8A2A; --green: #13B45A;
+    --ink: #1b1b1f; --mut: #6b6b74; --bg: #fafafa; --card: #ffffff;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+         background: var(--bg); color: var(--ink); min-height: 100vh; display: flex; flex-direction: column; }
+  header { display: flex; align-items: center; justify-content: space-between;
+           padding: 18px 28px; }
+  .brand { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 18px; }
+  .brand svg { display: block; }
+  .account { text-decoration: none; color: var(--ink); font-weight: 600; font-size: 14px;
+             border: 1.5px solid #d9d9de; border-radius: 10px; padding: 9px 16px;
+             transition: border-color .15s, color .15s; }
+  .account:hover { border-color: var(--orange); color: var(--orange); }
+  main { flex: 1; display: flex; flex-direction: column; align-items: center;
+         justify-content: center; text-align: center; padding: 48px 24px 64px; }
+  .logo-hero { width: 128px; height: 128px; margin-bottom: 28px;
+               filter: drop-shadow(0 12px 28px rgba(238, 90, 5, .25)); }
+  h1 { font-size: 44px; letter-spacing: -0.5px; margin-bottom: 12px; }
+  .tag { font-size: 18px; color: var(--mut); max-width: 520px; line-height: 1.5; margin-bottom: 36px; }
+  .actions { display: flex; gap: 14px; flex-wrap: wrap; justify-content: center; margin-bottom: 18px; }
+  .btn { text-decoration: none; font-weight: 650; font-size: 15px; border-radius: 12px;
+         padding: 14px 24px; transition: transform .1s, box-shadow .15s; display: inline-block; }
+  .btn:active { transform: translateY(1px); }
+  .btn-dl { background: linear-gradient(180deg, var(--orange-hi), var(--orange)); color: #fff;
+            box-shadow: 0 6px 18px rgba(238, 90, 5, .35); }
+  .btn-dl:hover { box-shadow: 0 8px 24px rgba(238, 90, 5, .45); }
+  .btn-gh { background: var(--card); color: var(--ink); border: 1.5px solid #d9d9de; }
+  .btn-gh:hover { border-color: var(--ink); }
+  .fine { font-size: 13px; color: var(--mut); line-height: 1.7; max-width: 560px; }
+  .fine code { background: #efeff2; border-radius: 5px; padding: 1px 6px; font-size: 12px; }
+  footer { text-align: center; padding: 22px; font-size: 12.5px; color: var(--mut); }
+  footer a { color: var(--mut); }
+  @media (prefers-color-scheme: dark) {
+    :root { --ink: #ececf0; --mut: #9a9aa4; --bg: #131316; --card: #1d1d22; }
+    .account, .btn-gh { border-color: #3a3a42; }
+    .fine code { background: #26262c; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <div class="brand">
+    <svg width="28" height="28" viewBox="0 0 1024 1024" aria-hidden="true">
+      <defs><radialGradient id="o" cx="38%" cy="30%" r="85%">
+        <stop offset="0%" stop-color="#FF8A2A"/><stop offset="100%" stop-color="#EE5A05"/>
+      </radialGradient></defs>
+      <circle cx="512" cy="512" r="480" fill="url(#o)"/>
+      <circle cx="512" cy="512" r="262" fill="#fff"/>
+      <circle cx="512" cy="512" r="198" fill="#13B45A"/>
+    </svg>
+    NGP
+  </div>
+  <a class="account" href="https://id.ngp.one/login">Log in / My account</a>
+</header>
+
+<main>
+  <svg class="logo-hero" viewBox="0 0 1024 1024" aria-hidden="true">
+    <defs><radialGradient id="oh" cx="38%" cy="30%" r="85%">
+      <stop offset="0%" stop-color="#FF8A2A"/><stop offset="100%" stop-color="#EE5A05"/>
+    </radialGradient></defs>
+    <circle cx="512" cy="512" r="480" fill="url(#oh)"/>
+    <circle cx="512" cy="512" r="262" fill="#fff"/>
+    <circle cx="512" cy="512" r="198" fill="#13B45A"/>
+  </svg>
+  <h1>NGP Browser</h1>
+  <p class="tag">A private, Chromium-based browser. No Google services —
+     sync lives on ngp.one and signs in with your X account.</p>
+  <div class="actions">
+    <a class="btn btn-dl" href="https://github.com/orzelig/ngp-releases/releases/download/v156.0.8078.79-ngp.3/NGP-156.0.8078.79-ngp.3.dmg">
+      Download for macOS&nbsp;·&nbsp;Apple&nbsp;Silicon</a>
+    <a class="btn btn-gh" href="https://github.com/orzelig/ungoogled-chromium-macos">Source on GitHub</a>
+  </div>
+  <p class="fine">
+    Version 156.0.8078.79-ngp.3 · early build, ad-hoc signed — on first launch,
+    right-click the app and choose <code>Open</code>.<br>
+    The browser updates itself from this site. Based on
+    <a href="https://github.com/ungoogled-software/ungoogled-chromium" style="color:inherit">ungoogled-chromium</a>.
+  </p>
+</main>
+
+<footer>© 2026 NGP · <a href="https://id.ngp.one/login">Account</a></footer>
+</body>
+</html>
