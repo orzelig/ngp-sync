@@ -10,3 +10,10 @@
 {$DOMAIN_ID} {
 	reverse_proxy identity:8300
 }
+
+{$DOMAIN_ROOT} {
+	root * /srv/ngp
+	# Placeholder home until the real site exists.
+	redir / https://id.ngp.one/login temporary
+	file_server
+}

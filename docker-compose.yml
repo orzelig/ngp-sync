@@ -94,8 +94,10 @@ services:
     environment:
       - DOMAIN_SYNC=${DOMAIN_SYNC:-sync.ngp.one}
       - DOMAIN_ID=${DOMAIN_ID:-id.ngp.one}
+      - DOMAIN_ROOT=${DOMAIN_ROOT:-ngp.one}
     volumes:
       - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./site:/srv/ngp:ro
       - caddy_data:/data
       - caddy_config:/config
 
