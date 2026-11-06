@@ -100,7 +100,8 @@ func main() {
 	mux.HandleFunc("GET /verify", app.handleVerify)
 	if os.Getenv("DEV_MODE") == "1" {
 		mux.HandleFunc("POST /dev/seed", app.handleDevSeed)
-		log.Printf("DEV_MODE=1: /dev/seed enabled — never set this in production")
+		mux.HandleFunc("GET /dev/enroll", app.handleDevEnroll)
+		log.Printf("DEV_MODE=1: /dev/seed and /dev/enroll enabled — never set this in production")
 	}
 
 	log.Printf("identity service listening on %s (public base %s)", cfg.ListenAddr, cfg.BaseURL)
@@ -319,6 +320,30 @@ func (a *App) handleDevSeed(w http.ResponseWriter, r *http.Request) {
 	a.writeTokenResponseTTL(w, in.XID, refresh, time.Duration(in.TTLDays)*24*time.Hour)
 }
 
+// handleDevEnroll (DEV_MODE only) renders the same post-login page as the X
+// callback, with a fresh device code for a seeded dev user — so the browser's
+// native ngp://enable-sync flow can be exercised without X credentials.
+func (a *App) handleDevEnroll(w http.ResponseWriter, r *http.Request) {
+	xid := r.URL.Query().Get("x_id")
+	if xid == "" {
+		xid = "dev1"
+	}
+	if err := a.store.UpsertUser(xid, "devuser"); err != nil {
+		jsonError(w, http.StatusInternalServerError, "storage error")
+		return
+	}
+	deviceCode := randHex(4)
+	a.mu.Lock()
+	a.linkCodes[deviceCode] = linkEntry{XID: xid, Expires: time.Now().Add(linkCodeTTL)}
+	a.mu.Unlock()
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	_ = linkPageTmpl.Execute(w, map[string]string{
+		"Username": "devuser",
+		"Code":     deviceCode,
+		"BaseURL":  a.cfg.BaseURL,
+	})
+}
+
 func (a *App) janitor() {
 	for range time.Tick(time.Minute) {
 		now := time.Now()
@@ -351,10 +376,13 @@ var linkPageTmpl = template.Must(template.New("link").Parse(`<!doctype html>
   body { font-family: system-ui, sans-serif; max-width: 34rem; margin: 4rem auto; padding: 0 1rem; }
   code.big { font-size: 1.6rem; letter-spacing: .2em; background: #f2f2f2; padding: .4rem .8rem; border-radius: 6px; }
   pre { background: #f8f8f8; padding: .8rem; border-radius: 6px; overflow-x: auto; }
+  a.enroll { display: inline-block; background: #111; color: #fff; padding: .7rem 1.2rem; border-radius: 8px; text-decoration: none; font-weight: 600; }
 </style>
 <h1>Signed in as @{{.Username}}</h1>
-<p>Enter this one-time code in your browser to link it to your sync account.
-It is valid for 10 minutes and can be used once:</p>
+<p><a class="enroll" href="ngp://enable-sync?code={{.Code}}">Enable sync in the NGP browser</a><br>
+<small>(works only inside the NGP browser; it stores a sync token and restarts)</small></p>
+<p>From any other browser, enter this one-time code to link a device to your
+sync account. It is valid for 10 minutes and can be used once:</p>
 <p><code class="big">{{.Code}}</code></p>
 <p>Or link manually from a terminal:</p>
 <pre>curl -s -X POST {{.BaseURL}}/device/link \

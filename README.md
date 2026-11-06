@@ -89,14 +89,22 @@ Expected cost: $0 plus possibly the external IPv4 fee (≈$3.65/mo worst case).
 
 ## Everyday use
 
-```sh
-# once: log in at https://id.ngp.one/login, then turn the code into a token
-./scripts/get-token.sh <device-code>        # writes .ngp-sync-token (30 days)
-./scripts/chromium-ngp.sh                   # browser against sync.ngp.one
-./scripts/get-token.sh --renew              # new token later, no X login
+The browser (from commit `9e160de` of the browser repo on) needs no flags:
+it defaults to `https://sync.ngp.one/v2` with sync **off**. To enable sync,
+open <https://id.ngp.one/login>, sign in with X, and click **"Enable sync in
+the NGP browser"** — the browser exchanges the one-time code itself, stores
+a 30-day token in its profile storage (`<User Data>/ngp-sync-token`), and
+restarts with sync on. Enrollment only accepts user clicks originating on
+`id.ngp.one` pages.
 
+```sh
+./scripts/chromium-ngp.sh                   # launch (profile ~/.ngp-chromium/main)
 ./scripts/chromium-ngp.sh --local           # against the laptop stack instead
 ```
+
+Script-based tokens still work and take precedence when present:
+`./scripts/get-token.sh <device-code>` (or `--renew`) writes
+`.ngp-sync-token`, which the launcher passes through.
 
 ## Roadmap
 

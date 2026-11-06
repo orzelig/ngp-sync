@@ -1,35 +1,46 @@
 #!/usr/bin/env bash
-# Launch the locally built ungoogled-chromium against the ngp-sync server
-# for everyday use (persistent profile, no debug ports).
+# Launch the locally built ungoogled-chromium for everyday use.
 #
-#   ./scripts/chromium-ngp.sh                 # prod: https://sync.ngp.one/v2, token .ngp-sync-token
-#   ./scripts/chromium-ngp.sh --local         # local stack: http://localhost:8295/v2, .dev-sync-token
+# Sync needs no flags anymore: the browser defaults to
+# https://sync.ngp.one/v2 and stays off until enabled. To enable it, open
+# https://id.ngp.one/login, sign in with X, and click "Enable sync in the
+# NGP browser" — the browser stores a token in its profile storage and
+# restarts with sync on.
+#
+#   ./scripts/chromium-ngp.sh                 # production
+#   ./scripts/chromium-ngp.sh --local         # laptop stack (dev identity + sync)
 #   ./scripts/chromium-ngp.sh --profile work  # separate profile dir
 #
-# Profiles live under ~/.ngp-chromium/<name>. Extra args pass through.
+# A token file (.ngp-sync-token, from scripts/get-token.sh) is optional; if
+# present it is passed through and overrides in-browser enrollment.
 set -euo pipefail
 
 DIR="$(cd "$(dirname "$0")/.." && pwd)"
 APP="${CHROMIUM_APP:-$DIR/../ungoogled-chromium-macos/build/src/out/Default/Chromium.app}"
 BIN="$APP/Contents/MacOS/Chromium"
 PROFILE="main"
-SYNC_URL="https://sync.ngp.one/v2"
-TOKEN_FILE="$DIR/.ngp-sync-token"
+EXTRA=()
 
 while [ $# -gt 0 ]; do
   case "$1" in
-    --local) SYNC_URL="http://localhost:8295/v2"; TOKEN_FILE="$DIR/.dev-sync-token"; shift ;;
+    --local)
+      EXTRA+=(--sync-url=http://localhost:8295/v2 --ngp-id-url=http://localhost:8300)
+      [ -s "$DIR/.dev-sync-token" ] && EXTRA+=(--ngp-sync-token-file="$DIR/.dev-sync-token")
+      shift ;;
     --profile) PROFILE="$2"; shift 2 ;;
-    -h|--help) sed -n '2,10p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,16p' "$0"; exit 0 ;;
     *) break ;;
   esac
 done
 
 [ -x "$BIN" ] || { echo "No Chromium binary at: $BIN (set CHROMIUM_APP)"; exit 1; }
-[ -s "$TOKEN_FILE" ] || { echo "No token at $TOKEN_FILE — run scripts/get-token.sh first."; exit 1; }
+
+# Legacy/scripted token takes precedence when present.
+if [ ${#EXTRA[@]} -eq 0 ] && [ -s "$DIR/.ngp-sync-token" ]; then
+  EXTRA+=(--ngp-sync-token-file="$DIR/.ngp-sync-token")
+fi
 
 exec "$BIN" \
   --user-data-dir="$HOME/.ngp-chromium/$PROFILE" \
-  --sync-url="$SYNC_URL" \
-  --ngp-sync-token-file="$TOKEN_FILE" \
+  "${EXTRA[@]+"${EXTRA[@]}"}" \
   "$@"
