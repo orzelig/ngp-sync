@@ -1,8 +1,18 @@
 # ngp-sync
 
-Self-hosted Chromium sync backend for NGP (the ungoogled-chromium fork), with
-"Log in with X" identity. The browser never talks to X — it only ever sees
-`sync.ngp.one` and a bearer token:
+Server side for **NGP** (the private macOS ungoogled-chromium fork — browser
+repo: [`orzelig/ngp-browser`](https://github.com/orzelig/ngp-browser)). This
+repo holds everything that runs on `ngp.one`:
+
+- a **self-hosted Chromium sync backend** (`sync.ngp.one`),
+- an **identity service** with "Log in with X" (`id.ngp.one`), and
+- the **`ngp.one` site** (home / terms / privacy + the signed update manifests
+  the browser checks),
+
+all wired together with Docker Compose and fronted by Caddy for TLS.
+
+The browser never talks to X — it only ever sees `sync.ngp.one` and a bearer
+token:
 
 ```
 browser ──(bearer JWT)──► sync.ngp.one (go-sync) ──► dynamodb-local
@@ -18,14 +28,26 @@ the server only ever stores ciphertext.
 
 | Service    | What                                                        | Port |
 |------------|-------------------------------------------------------------|------|
-| `gosync`   | [brave/go-sync](https://github.com/brave/go-sync), built from source at the ref pinned in `.env` | 8295 |
+| `gosync`   | [brave/go-sync](https://github.com/brave/go-sync), built from source at the ref pinned in `.env`, with the NGP JWT-auth patch applied | 8295 |
 | `dynamo`   | dynamodb-local (JVM capped at 256 MB), data on a volume     | 8000 |
 | `dynamo-init` | one-shot table creation from `gosync/table.json`         | —    |
 | `redis`    | redis 6.2, 64 MB cap, persistence on                        | 6379 |
 | `identity` | X OAuth → device-link codes → refresh tokens → sync JWTs (`identity/`, pure-stdlib Go) | 8300 |
-| `caddy`    | TLS for `sync.ngp.one` + `id.ngp.one` (prod profile only)   | 80/443 |
+| `caddy`    | TLS + routing for `sync.ngp.one`, `id.ngp.one`, and the `ngp.one` static site (prod profile only) | 80/443 |
 
-## Local quickstart (Phase 1)
+## Repo layout
+
+| Path             | What                                                                 |
+|------------------|----------------------------------------------------------------------|
+| `gosync/`        | `Dockerfile` + `0001-ngp-jwt-auth.patch` (applied at image build) + `table.json` |
+| `identity/`      | the "Log in with X" identity service (Go, stdlib only)               |
+| `site/`          | the `ngp.one` static site — `index.html` (download + source + account links), `terms.html`, `privacy.html`, favicons, `robots.txt`, and `update/macos-arm64.json` (the signed update manifest) |
+| `caddy/`         | `Caddyfile` — reverse-proxies the two services and serves `site/`; sends `noindex` headers + a disallow-all `robots.txt` on all three hosts |
+| `provision/`     | `gcloud.sh` (create IP/firewall/VM) and `vm-setup.sh` (swap + Docker on the VM) |
+| `scripts/`       | launch/test helpers (see below)                                      |
+| `docker-compose.yml` | the stack; `--profile prod` adds Caddy                          |
+
+## Local quickstart
 
 ```sh
 cp .env.example .env            # set at least SYNC_JWT_SECRET (openssl rand -hex 32)
@@ -34,11 +56,16 @@ curl http://localhost:8300/healthz
 ```
 
 Validate the sync server with stock Brave (same protocol, no Chromium patches
-needed): `./scripts/brave-test.sh a` and `./scripts/brave-test.sh b`, start a
-sync chain in A, join from B, watch a bookmark propagate.
+needed): `./scripts/brave-test.sh a` and `./scripts/brave-test.sh b` — start a
+sync chain in A, join from B, watch a bookmark propagate. For the NGP browser
+instead, use `./scripts/chromium-test.sh a` / `b`.
 Logs: `docker compose logs -f gosync`.
 
-## Identity API
+## Identity service (`id.ngp.one`)
+
+Pure-stdlib Go (`identity/`). Flow: user authorizes on X → `/callback` shows a
+one-time device-link code → the browser (or a script) exchanges it for a
+refresh token + a short-lived access JWT.
 
 | Endpoint            | What                                                              |
 |---------------------|-------------------------------------------------------------------|
@@ -46,15 +73,20 @@ Logs: `docker compose logs -f gosync`.
 | `GET /callback`     | X redirect target; shows a one-time device-link code (10 min, single use) |
 | `POST /device/link` | `{"code","device","ttl_days"?}` → `{account_id, refresh_token, access_token}` |
 | `POST /token`       | `{"refresh_token","ttl_days"?}` → fresh access JWT                |
+| `GET /verify`       | `Authorization: Bearer <jwt>` → claims (same check go-sync does)  |
 
 `ttl_days` (optional, clamped to 90) mints a long-lived access token — the
 browser patch reads one static token from a file and has no refresh loop yet.
 Without it, access tokens last 15 minutes. `scripts/get-token.sh` wraps both
 endpoints: device code → token file, and `--renew` via the stored refresh token.
-| `GET /verify`       | `Authorization: Bearer <jwt>` → claims (same check go-sync will do) |
+Identity responses also carry the X username + avatar (with a PNG avatar proxy).
 
 JWTs are HS256 with the shared `SYNC_JWT_SECRET`; claims:
 `iss` = identity base URL, `sub` = `x:<x-user-id>`, `aud` = `ngp-sync`.
+go-sync verifies the same secret via `gosync/0001-ngp-jwt-auth.patch`
+(dual-mode: NGP JWTs **and** Brave-style seed tokens; `ClientID =
+sha256(subject)`; per-account derived keystore keys). With `DEV_MODE=1`,
+`POST /dev/seed` mints tokens without X for local testing.
 
 > **Rotating `SYNC_JWT_SECRET` wipes sync, by design:** go-sync's per-account
 > keystore keys are HMAC-derived from the same secret, so after a rotation the
@@ -63,17 +95,25 @@ JWTs are HS256 with the shared `SYNC_JWT_SECRET`; claims:
 > so the server looks quiet). After rotating: `docker compose down -v`,
 > bring the stack back up, mint new tokens, and let clients re-upload.
 
+## The `ngp.one` site
+
+`site/` is served statically by Caddy at the apex. It contains the home page
+(download link to the current `ngp-releases` DMG, a "Source on GitHub" link,
+and a "Log in / My account" link to `id.ngp.one`), the Terms and Privacy pages,
+and `update/macos-arm64.json` — the ed25519-signed update manifest the browser
+polls (`version`, `url`, `sha256`, `sig`). All three hosts are marked
+`noindex`/disallow-all so the site is not crawled.
+
 ## Deploy to GCP (Always Free e2-micro)
 
 **Deployed 2026-11-05:** project `ngp-sync-one` (account or@zelig.me,
 "Or Zelig Supar" billing account), VM `ngp-sync` in `us-central1-a`,
 static IP **34.46.4.190**, stack under the `prod` profile (`DEV_MODE=0`,
-same `SYNC_JWT_SECRET` as the laptop `.env`, X creds pending). Manage it with
+same `SYNC_JWT_SECRET` as the laptop `.env`). Manage it with
 `gcloud --project ngp-sync-one --account or@zelig.me compute ssh ngp-sync --zone us-central1-a`.
 Note: an inherited org policy denies VM external IPs; the project carries a
 non-inheriting `compute.vmExternalIpAccess` policy allowing exactly this
-instance. (The earlier `ngp-sync-prod` project under or@supar.work was
-deleted — wrong account.)
+instance.
 
 For a fresh deployment:
 
@@ -89,13 +129,12 @@ Expected cost: $0 plus possibly the external IPv4 fee (≈$3.65/mo worst case).
 
 ## Everyday use
 
-The browser (from commit `9e160de` of the browser repo on) needs no flags:
-it defaults to `https://sync.ngp.one/v2` with sync **off**. To enable sync,
-open <https://id.ngp.one/login>, sign in with X, and click **"Enable sync in
-the NGP browser"** — the browser exchanges the one-time code itself, stores
-a 30-day token in its profile storage (`<User Data>/ngp-sync-token`), and
-restarts with sync on. Enrollment only accepts user clicks originating on
-`id.ngp.one` pages.
+The NGP browser needs no flags: it defaults to `https://sync.ngp.one/v2` with
+sync **off**. To enable sync, open <https://id.ngp.one/login>, sign in with X,
+and click **"Enable sync in the NGP browser"** — the browser exchanges the
+one-time code itself (`ngp://enable-sync?code=…`), stores a 30-day token in its
+profile storage (`<User Data>/ngp-sync-token`), and restarts with sync on.
+Enrollment only accepts user clicks originating on `id.ngp.one` pages.
 
 ```sh
 ./scripts/ngp.sh                            # launch (profile ~/.ngp-chromium/main)
@@ -106,41 +145,18 @@ Script-based tokens still work and take precedence when present:
 `./scripts/get-token.sh <device-code>` (or `--renew`) writes
 `.ngp-sync-token`, which the launcher passes through.
 
-## Roadmap
+## Status
 
-- [x] Phase 1 — this scaffold: go-sync + identity, running locally
-- [x] Phase 2 — JWT auth in go-sync (`gosync/0001-ngp-jwt-auth.patch`,
-      applied at image build): dual-mode (ngp JWTs + Brave seed tokens),
-      ClientID = sha256(subject), per-account derived keystore keys.
-      `DEV_MODE=1` + `POST /dev/seed` mints tokens without X. E2E verified
-      against `POST /v2/command/`.
-- [x] Phase 3 — browser patch (`ungoogled-chromium-macos` repo:
-      `patches/ungoogled-chromium/macos/ngp-sync.patch`):
-      `--ngp-sync-token(-file)` restores sync-service creation (ungoogled
-      stubs it), rides local-sync mode's account-free gating, points the
-      engine at `--sync-url`, attaches the bearer token per request.
-      Apply-validated against the full patch pipeline; needs a build to
-      compile-test. Test with `./scripts/chromium-test.sh a` / `b`.
-- [x] Phase 4 — built locally (arm64, macOS 26.5 SDK) and verified:
-      two fresh instances against this stack sync bookmarks both ways
-      in 20-30s. Three browser-patch fixes landed from this test
-      (browser repo commit `6c90f78`): pre-cache the bearer token in
-      `SyncServerConnectionManager` (the scheduler drops every job
-      when no token is cached — engine stuck at "Initializing"),
-      PostBuffer-level token fallback, and a null-`SecurityEventRecorder`
-      guard (startup CHECK-crash; safe browsing is compiled out).
-- [x] Deploy to GCP: `ngp-sync-one` (or@zelig.me, Or Zelig Supar billing) /
-      `us-central1-a` / 34.46.4.190, prod profile up with `DEV_MODE=0`.
-      Production E2E verified 2026-11-05: DNS A records live, Let's
-      Encrypt certs issued, and two browser instances synced bookmarks
-      both ways through https://sync.ngp.one/v2
-- [x] Real X login (2026-11-05): X app "NGP.one" (confidential Web App,
-      read-only scopes, callback `https://id.ngp.one/callback`), creds in
-      the VM `.env`. Full flow verified: X consent -> device code ->
-      `get-token.sh` -> 30-day token for the real account -> two browsers
-      synced bookmarks both ways through https://sync.ngp.one/v2
-- [ ] Hardening: refresh-token rotation + revocation UI, rate limiting,
-      RS256/JWKS instead of shared secret if go-sync and identity ever
-      live on different hosts; browser-side token refresh (the patch
-      currently reads one long-lived token); separate `KEYSTORE_SECRET`
-      from `SYNC_JWT_SECRET` so rotating tokens stops wiping sync data
+Live in production since 2026-11-05: DNS A records resolve, Let's Encrypt certs
+are issued, real "Log in with X" works end-to-end (X consent → device code →
+30-day token), and two browser instances sync bookmarks both ways through
+`https://sync.ngp.one/v2`.
+
+Still open (hardening):
+
+- refresh-token rotation + revocation UI, rate limiting
+- RS256/JWKS instead of a shared secret if go-sync and identity ever live on
+  different hosts
+- browser-side token refresh (the patch currently reads one long-lived token)
+- separate `KEYSTORE_SECRET` from `SYNC_JWT_SECRET` so rotating tokens stops
+  wiping sync data
