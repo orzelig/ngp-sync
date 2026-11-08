@@ -1,6 +1,6 @@
 {
-  "version": "156.0.8078.79-ngp.8",
-  "url": "https://github.com/orzelig/ngp-releases/releases/download/v156.0.8078.79-ngp.8/NGP-156.0.8078.79-ngp.8.dmg",
-  "sha256": "1ca053f44f99873c4b6a4bf288d34f8c8ee5cd3fa3bf56e08eefd34f98b33c17",
-  "sig": "PP9ViX79WIKP8xVlqADgX46I8UMx5r3OJp9FM9MMoj8hqJGNTax04rWjmnGD46FkDKj41EIQLN3Rv5nU63AFBQ=="
+  "version": "156.0.8078.79-ngp.9",
+  "url": "https://github.com/orzelig/ngp-releases/releases/download/v156.0.8078.79-ngp.9/NGP-156.0.8078.79-ngp.9.dmg",
+  "sha256": "c7f5b1a3e3dfeae02251b4f87b165d6385618ca98040cfdb6de05a4dcfd369d5",
+  "sig": "yElP+rXkMeayHiRM+oPXNiBVAyrplaqxJrPVVdljige5rdUyTyUjZzp+JOC0DNYYxvNjTJOtKPWny6UQAYP5Bw=="
 }
