@@ -51,9 +51,10 @@ type linkEntry struct {
 }
 
 type App struct {
-	cfg   Config
-	store *Store
-	http  *http.Client
+	cfg    Config
+	store  *Store
+	http   *http.Client
+	dynamo *dynamoClient
 
 	mu        sync.Mutex
 	pending   map[string]pendingAuth // OAuth state → PKCE verifier
@@ -90,6 +91,7 @@ func main() {
 		cfg:       cfg,
 		store:     store,
 		http:      &http.Client{Timeout: 15 * time.Second},
+		dynamo:    newDynamoFromEnv(),
 		pending:   map[string]pendingAuth{},
 		linkCodes: map[string]linkEntry{},
 	}
@@ -138,10 +140,14 @@ func (a *App) handleLogin(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "X_CLIENT_ID / X_CLIENT_SECRET are not configured yet", http.StatusServiceUnavailable)
 		return
 	}
+	next := r.URL.Query().Get("next")
+	if !strings.HasPrefix(next, "/") || strings.HasPrefix(next, "//") {
+		next = "" // only same-site absolute paths; no open redirects
+	}
 	state := randHex(16)
 	verifier := randHex(32) // 64 chars — within PKCE's 43–128 requirement
 	a.mu.Lock()
-	a.pending[state] = pendingAuth{Verifier: verifier, Expires: time.Now().Add(pendingAuthTTL)}
+	a.pending[state] = pendingAuth{Verifier: verifier, Next: next, Expires: time.Now().Add(pendingAuthTTL)}
 	a.mu.Unlock()
 	http.Redirect(w, r, a.authorizeURL(state, verifier), http.StatusFound)
 }
@@ -183,6 +189,12 @@ func (a *App) handleCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	a.setSession(w, xid) // web session for the account page (id.ngp.one/account)
+	if p.Next != "" {
+		// Came from the website (e.g. the "My account" link) — go to the page
+		// instead of the browser device-link screen.
+		http.Redirect(w, r, p.Next, http.StatusFound)
+		return
+	}
 
 	deviceCode := randHex(4) // 8 hex chars, single-use, short-lived
 	a.mu.Lock()
@@ -454,15 +466,18 @@ func handleDevAvatar(w http.ResponseWriter, _ *http.Request) {
 // ---- Account page (web-session gated; see session.go) --------------------
 
 type deviceView struct {
-	ID      string
-	Name    string
-	Created string
+	Name       string
+	RevokeName string
+	Created    string
 }
 
 type accountView struct {
 	Username  string
 	AvatarURL string
 	Joined    string
+	Synced    []TypeCount
+	SyncOK    bool
+	SyncTotal int
 	Devices   []deviceView
 	CSRF      string
 }
@@ -470,23 +485,50 @@ type accountView struct {
 func (a *App) handleAccount(w http.ResponseWriter, r *http.Request) {
 	xid := a.sessionXID(r)
 	if xid == "" {
-		http.Redirect(w, r, "/login", http.StatusFound)
+		http.Redirect(w, r, "/login?next=/account", http.StatusFound)
 		return
 	}
 	u, ok := a.store.GetUser(xid)
 	if !ok {
 		a.clearSession(w)
-		http.Redirect(w, r, "/login", http.StatusFound)
+		http.Redirect(w, r, "/login?next=/account", http.StatusFound)
 		return
 	}
+
+	// What's synced — best-effort read-only count from the sync DB.
+	var synced []TypeCount
+	syncOK := false
+	total := 0
+	if a.dynamo != nil {
+		if s, err := a.dynamo.SyncSummary(syncClientID(xid)); err != nil {
+			log.Printf("sync summary: %v", err)
+		} else {
+			synced, syncOK = s, true
+			for _, t := range s {
+				total += t.Count
+			}
+		}
+	}
+
+	// Devices — collapse duplicates (one install per device; repeats are dev
+	// artifacts) by display name, newest first. Remove targets every token of
+	// that name.
+	seen := map[string]bool{}
 	var devs []deviceView
 	for _, d := range a.store.ListDevices(xid) {
-		name := d.Device
-		if name == "" {
-			name = "Unnamed device"
+		raw := strings.TrimSpace(d.Device)
+		disp := raw
+		if disp == "" {
+			disp = "NGP browser"
 		}
-		devs = append(devs, deviceView{ID: d.ID, Name: name, Created: d.Created.Format("Jan 2, 2006")})
+		key := strings.ToLower(disp)
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		devs = append(devs, deviceView{Name: disp, RevokeName: raw, Created: d.Created.Format("Jan 2, 2006")})
 	}
+
 	avatar := ""
 	if u.AvatarURL != "" {
 		if strings.HasPrefix(u.AvatarURL, a.cfg.BaseURL) {
@@ -500,6 +542,9 @@ func (a *App) handleAccount(w http.ResponseWriter, r *http.Request) {
 		Username:  u.Username,
 		AvatarURL: avatar,
 		Joined:    u.CreatedAt.Format("January 2, 2006"),
+		Synced:    synced,
+		SyncOK:    syncOK,
+		SyncTotal: total,
 		Devices:   devs,
 		CSRF:      a.csrfToken(xid),
 	})
@@ -510,11 +555,11 @@ func (a *App) handleRevoke(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if id := r.PostForm.Get("id"); id != "" {
-		if _, err := a.store.RevokeDevice(xid, id); err != nil {
-			http.Error(w, "storage error", http.StatusInternalServerError)
-			return
-		}
+	// "name" is the device's raw name (may be empty — the unnamed-device
+	// bucket); revoke every token that shares it.
+	if _, err := a.store.RevokeDeviceByName(xid, r.PostForm.Get("name")); err != nil {
+		http.Error(w, "storage error", http.StatusInternalServerError)
+		return
 	}
 	http.Redirect(w, r, "/account", http.StatusSeeOther)
 }
@@ -564,6 +609,12 @@ var accountTmpl = template.Must(template.New("account").Parse(`<!doctype html>
   .row .meta{ font-size:.82rem; color:var(--mut); }
   .note{ font-size:.92rem; color:var(--mut); }
   .note b{ color:var(--ink); font-weight:600; }
+  .note.sub{ margin-top:.65rem; }
+  .list{ padding:.3rem 1.2rem; }
+  .srow{ display:flex; justify-content:space-between; align-items:center; padding:.6rem 0; border-top:1px solid var(--line); }
+  .srow:first-child{ border-top:none; }
+  .sname{ font-weight:500; }
+  .scount{ color:var(--mut); font-weight:600; font-variant-numeric:tabular-nums; }
   button{ font:inherit; cursor:pointer; border-radius:9px; border:1px solid var(--line); background:var(--card); color:var(--ink); padding:.5rem .95rem; font-weight:600; }
   button:hover{ border-color:var(--mut); }
   button.link{ border:none; background:none; color:var(--danger); padding:.4rem .2rem; }
@@ -584,10 +635,17 @@ var accountTmpl = template.Must(template.New("account").Parse(`<!doctype html>
     </div>
   </header>
 
-  <h2>Sync</h2>
-  <div class="card">
-    <p class="note">Your bookmarks, history, open tabs, passwords and autofill sync through <b>sync.ngp.one</b>, encrypted in transit and at rest. The data itself lives in the NGP browser — manage which types sync in its <b>Settings</b>.</p>
+  <h2>What&rsquo;s synced{{if .SyncOK}} &middot; {{.SyncTotal}} items{{end}}</h2>
+  {{if and .SyncOK .Synced}}
+  <div class="card list">
+    {{range .Synced}}<div class="srow"><span class="sname">{{.Name}}</span><span class="scount">{{.Count}}</span></div>{{end}}
   </div>
+  <p class="note sub">Stored encrypted on <b>sync.ngp.one</b> and readable only in the NGP browser. Choose which types sync in the browser&rsquo;s <b>Settings</b>.</p>
+  {{else if .SyncOK}}
+  <div class="card"><p class="note">Nothing is syncing yet. Open <b>id.ngp.one/login</b> in the NGP browser and click <b>Enable sync</b>.</p></div>
+  {{else}}
+  <div class="card"><p class="note">Your data syncs through <b>sync.ngp.one</b> (encrypted in transit and at rest) and is managed in the NGP browser. Live item counts are temporarily unavailable.</p></div>
+  {{end}}
 
   <h2>Devices ({{len .Devices}})</h2>
   {{if .Devices}}
@@ -599,7 +657,7 @@ var accountTmpl = template.Must(template.New("account").Parse(`<!doctype html>
       </div>
       <form class="inline" method="post" action="/account/revoke">
         <input type="hidden" name="csrf" value="{{$.CSRF}}">
-        <input type="hidden" name="id" value="{{.ID}}">
+        <input type="hidden" name="name" value="{{.RevokeName}}">
         <button class="link" type="submit">Remove</button>
       </form>
     </div>

@@ -30,6 +30,7 @@ const (
 
 type pendingAuth struct {
 	Verifier string
+	Next     string // same-site path to return to after login (e.g. /account)
 	Expires  time.Time
 }
 

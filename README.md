@@ -21,8 +21,11 @@ browser ──(bearer JWT)──► sync.ngp.one (go-sync) ──► dynamodb-lo
                            mints the JWTs
 ```
 
-Sync payloads are end-to-end encrypted by the client (custom passphrase), so
-the server only ever stores ciphertext.
+By default, sync uses Chromium's keystore encryption, whose key the server
+derives itself (`KeystoreKeyForClient`) — so payloads are encrypted in transit
+and at rest, but the server **can** read them (it holds the key). Setting a sync
+passphrase in the browser makes sync end-to-end encrypted; only then does the
+server store ciphertext it cannot read.
 
 ## Components
 

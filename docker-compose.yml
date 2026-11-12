@@ -73,12 +73,21 @@ services:
   identity:
     build: ./identity
     restart: unless-stopped
+    depends_on:
+      - dynamo
     environment:
       - BASE_URL=${IDENTITY_BASE_URL:-http://localhost:8300}
       - X_CLIENT_ID=${X_CLIENT_ID:-}
       - X_CLIENT_SECRET=${X_CLIENT_SECRET:-}
       - SYNC_JWT_SECRET=${SYNC_JWT_SECRET:?set SYNC_JWT_SECRET in .env (openssl rand -hex 32)}
       - DEV_MODE=${DEV_MODE:-0}           # 1 enables POST /dev/seed — local testing only
+      # Read-only access to the sync DB so the account page can show item counts
+      # (dynamodb-local runs -sharedDb; these creds only namespace, not gate).
+      - AWS_ENDPOINT=http://dynamo:8000
+      - TABLE_NAME=client-entity-dev
+      - AWS_REGION=us-west-2
+      - AWS_ACCESS_KEY_ID=GOSYNC
+      - AWS_SECRET_ACCESS_KEY=GOSYNC
     volumes:
       - identity_data:/data
     ports:
