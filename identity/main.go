@@ -116,6 +116,13 @@ func main() {
 	mux.HandleFunc("POST /account/revoke", app.handleRevoke)
 	mux.HandleFunc("POST /account/revoke-all", app.handleRevokeAll)
 	mux.HandleFunc("POST /account/logout", app.handleLogout)
+
+	// Anonymous, hardened telemetry sink (see telemetry.go). Currently the
+	// opt-in settings-reset report the NGP browser POSTs. Decoupled from the
+	// auth App on purpose: no store access, no JWT secret.
+	telemetry := newTelemetryCollector(telemetryPathFor(cfg.DataFile))
+	mux.HandleFunc("POST /t/reset", telemetry.handleResetReport)
+
 	if os.Getenv("DEV_MODE") == "1" {
 		mux.HandleFunc("POST /dev/seed", app.handleDevSeed)
 		mux.HandleFunc("GET /dev/enroll", app.handleDevEnroll)
@@ -124,7 +131,15 @@ func main() {
 	}
 
 	log.Printf("identity service listening on %s (public base %s)", cfg.ListenAddr, cfg.BaseURL)
-	log.Fatal(http.ListenAndServe(cfg.ListenAddr, mux))
+	srv := &http.Server{
+		Addr:              cfg.ListenAddr,
+		Handler:           mux,
+		ReadHeaderTimeout: 10 * time.Second, // slowloris guard
+		ReadTimeout:       20 * time.Second,
+		WriteTimeout:      30 * time.Second, // generous: the OAuth callback does upstream calls
+		IdleTimeout:       120 * time.Second,
+	}
+	log.Fatal(srv.ListenAndServe())
 }
 
 func (a *App) handleHome(w http.ResponseWriter, _ *http.Request) {
