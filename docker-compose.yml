@@ -92,6 +92,11 @@ services:
       - identity_data:/data
     ports:
       - "127.0.0.1:8300:8300"
+      # Operator-only telemetry read endpoint (admin_telemetry.go). Bound to
+      # loopback: on the VM it is reached only via an IAP-tunnelled SSH forward
+      # (gcloud compute ssh ngp-sync --tunnel-through-iap -- -N -L 8301:localhost:8301),
+      # never exposed on a public interface.
+      - "127.0.0.1:8301:8301"
 
   caddy:
     image: caddy:2-alpine

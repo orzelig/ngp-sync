@@ -42,6 +42,7 @@ type Config struct {
 	XClientSecret string
 	JWTSecret     []byte
 	ListenAddr    string
+	AdminAddr     string
 	DataFile      string
 }
 
@@ -74,6 +75,7 @@ func main() {
 		XClientID:     os.Getenv("X_CLIENT_ID"),
 		XClientSecret: os.Getenv("X_CLIENT_SECRET"),
 		ListenAddr:    envOr("LISTEN_ADDR", ":8300"),
+		AdminAddr:     envOr("ADMIN_ADDR", ":8301"),
 		DataFile:      envOr("DATA_FILE", "data/identity.json"),
 	}
 	secret := os.Getenv("SYNC_JWT_SECRET")
@@ -129,6 +131,10 @@ func main() {
 		mux.HandleFunc("GET /dev/avatar.png", handleDevAvatar)
 		log.Printf("DEV_MODE=1: /dev/seed and /dev/enroll enabled — never set this in production")
 	}
+
+	// Operator-only telemetry read endpoint (see admin_telemetry.go) on a
+	// separate port Caddy does not proxy; reached only via a Google IAP tunnel.
+	go startTelemetryAdmin(cfg.AdminAddr, telemetryPathFor(cfg.DataFile))
 
 	log.Printf("identity service listening on %s (public base %s)", cfg.ListenAddr, cfg.BaseURL)
 	srv := &http.Server{
