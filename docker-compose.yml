@@ -112,6 +112,7 @@ services:
     volumes:
       - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
       - ./site:/srv/ngp:ro
+      - /var/lib/ngp-update:/srv/ngp/update:ro
       - caddy_data:/data
       - caddy_config:/config
 

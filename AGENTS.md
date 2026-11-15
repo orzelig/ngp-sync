@@ -10,7 +10,8 @@ before changing it, and what Or has to look at before it merges.
 | `identity/` | The identity service (Go, `ngp.one/identity`): sign-in with X, the account page at id.ngp.one, device linking, and the settings-reset telemetry endpoint |
 | `gosync/` | Brave's go-sync, built from its image with `0001-ngp-jwt-auth.patch` applied: the sync server |
 | `site/` | ngp.one, static HTML served by Caddy |
-| `site/update/` | The browser's signed update manifest. Written by the browser's release pipeline, never by hand |
+| `site/update/` | The browser's signed update manifest: now only the seed for an empty `/var/lib/ngp-update` on the VM, which is what ngp.one serves. Never edited by hand |
+| `identity/cmd/manifest-pull/` | The VM's update-manifest puller: verifies the latest `orzelig/ngp-releases` manifest against a pinned key and installs it into `/var/lib/ngp-update` (ADR 0001, `docs/runbooks/manifest-pull.md`) |
 | `caddy/`, `docker-compose.yml`, `provision/` | How the VM runs and is provisioned |
 | `scripts/` | Test helpers, and tools that reach the VM, its telemetry and real browsers |
 
