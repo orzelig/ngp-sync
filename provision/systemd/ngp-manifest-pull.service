@@ -1,0 +1,15 @@
+# Pulls the signed update manifest into /var/lib/ngp-update, which Caddy serves
+# at ngp.one/update/. Installed and started by provision/vm-setup.sh; run by
+# ngp-manifest-pull.timer. See docs/runbooks/manifest-pull.md.
+[Unit]
+Description=Pull the signed NGP update manifest from orzelig/ngp-releases
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+TimeoutStartSec=180
+ExecStart=/usr/bin/docker run --rm --pull never --read-only --cap-drop ALL \
+  --security-opt no-new-privileges \
+  -v /var/lib/ngp-update:/update ngp-manifest-pull:local -dir /update

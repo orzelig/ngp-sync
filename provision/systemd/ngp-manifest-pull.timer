@@ -1,0 +1,12 @@
+# Every 15 minutes, plus up to 2 minutes of random delay: a cut reaches
+# ngp.one within 17 minutes. OnCalendar, not OnUnitActiveSec, so a failed run
+# does not stop the next one.
+[Unit]
+Description=Run ngp-manifest-pull every 15 minutes
+
+[Timer]
+OnCalendar=*:0/15
+RandomizedDelaySec=2min
+
+[Install]
+WantedBy=timers.target

@@ -46,7 +46,7 @@ server store ciphertext it cannot read.
 | `identity/`      | the "Log in with X" identity service (Go, stdlib only)               |
 | `site/`          | the `ngp.one` static site — `index.html` (download + source + account links), `terms.html`, `privacy.html`, favicons, `robots.txt`, and `update/macos-arm64.json` (the signed update manifest) |
 | `caddy/`         | `Caddyfile` — reverse-proxies the two services and serves `site/`; sends `noindex` headers + a disallow-all `robots.txt` on all three hosts |
-| `provision/`     | `gcloud.sh` (create IP/firewall/VM) and `vm-setup.sh` (swap + Docker on the VM) |
+| `provision/`     | `gcloud.sh` (create IP/firewall/VM), `vm-setup.sh` (swap + Docker + manifest puller on the VM) and `systemd/` (the puller's service and timer) |
 | `scripts/`       | launch/test helpers (see below)                                      |
 | `docker-compose.yml` | the stack; `--profile prod` adds Caddy                          |
 
@@ -107,6 +107,17 @@ and `update/macos-arm64.json` — the ed25519-signed update manifest the browser
 polls (`version`, `url`, `sha256`, `sig`). All three hosts are marked
 `noindex`/disallow-all so the site is not crawled.
 
+In production `/update/` is not served from the checkout: Caddy mounts the
+VM-only directory `/var/lib/ngp-update` over it, and `ngp-manifest-pull`
+(`identity/cmd/manifest-pull`, on a 15-minute systemd timer) fills it from the
+latest release of `orzelig/ngp-releases`, after verifying the signature against
+a key pinned in its source. The tracked `site/update/macos-arm64.json` only
+seeds an empty directory on a fresh VM, so a release no longer needs to commit
+the manifest here, and a redeploy never puts an older one back. See
+[`docs/runbooks/manifest-pull.md`](docs/runbooks/manifest-pull.md) and
+[ADR 0001](docs/adr/0001-update-manifest-served-from-vm-only-directory.md).
+The home page's download link and version are still a manual edit.
+
 ## Deploy to GCP (Always Free e2-micro)
 
 **Deployed 2026-11-05:** project `ngp-sync-one` (account or@zelig.me,
@@ -126,7 +137,10 @@ For a fresh deployment:
    (confidential), callback `https://id.ngp.one/callback`. Put client
    id/secret in `.env` **on the VM**.
 3. Copy this directory to the VM and run `sudo bash provision/vm-setup.sh`
-   (adds 2 GB swap, installs Docker, `docker compose --profile prod up -d`).
+   (adds 2 GB swap, installs Docker, sets up `/var/lib/ngp-update` and the
+   `ngp-manifest-pull` timer and runs it once, `docker compose --profile prod up -d`).
+   Redeploys are the same copy and the same script; neither touches the served
+   update manifest.
 
 Expected cost: $0 plus possibly the external IPv4 fee (≈$3.65/mo worst case).
 
