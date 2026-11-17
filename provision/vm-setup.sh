@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# VM setup: swap + Docker + the update-manifest puller + bring the stack up.
+# VM setup: swap + Docker + the update-manifest and site pullers + bring the stack up.
 # Run as root on the VM, from the ngp-sync directory: sudo bash provision/vm-setup.sh
 # It is re-run on every redeploy, so each step is safe to repeat.
 set -euo pipefail
@@ -50,6 +50,27 @@ systemctl enable --now ngp-manifest-pull.timer
 # the asset yet, GitHub down) must not fail the setup: the timer retries.
 systemctl start ngp-manifest-pull.service ||
   echo "first manifest pull failed; the timer retries every 15 minutes (journalctl -u ngp-manifest-pull)"
+
+# The served site/ follows orzelig/ngp-sync main: the site puller fetches main
+# into a clone in /var/lib/ngp-site-pull, outside this checkout, and writes
+# only this checkout's site/ (never site/update/). It runs as the owner of
+# site/, so a later scp redeploy can still overwrite what it wrote
+# (docs/runbooks/site-pull.md, ADR 0002).
+docker build -t ngp-site-pull:local -f identity/site-pull.Dockerfile identity
+site_uid="$(stat -c %u site)"
+site_gid="$(stat -c %g site)"
+printf 'NGP_SITE_DIR=%s\nNGP_SITE_UID=%s\nNGP_SITE_GID=%s\n' "$(pwd)/site" "$site_uid" "$site_gid" >/etc/ngp-site-pull.env
+chmod 0644 /etc/ngp-site-pull.env
+install -d -o "$site_uid" -g "$site_gid" -m 0755 /var/lib/ngp-site-pull
+chown -R "$site_uid:$site_gid" /var/lib/ngp-site-pull
+install -m 0644 provision/systemd/ngp-site-pull.service provision/systemd/ngp-site-pull.timer /etc/systemd/system/
+systemctl daemon-reload
+systemctl enable --now ngp-site-pull.timer
+# Pull once now: this also corrects a site/ the redeploy just put back to an
+# older state. A failed pull (repository not public yet, GitHub down) must not
+# fail the setup: the timer retries.
+systemctl start ngp-site-pull.service ||
+  echo "first site pull failed; the timer retries every 15 minutes (journalctl -u ngp-site-pull)"
 
 docker compose --profile prod up -d --build
 docker compose ps

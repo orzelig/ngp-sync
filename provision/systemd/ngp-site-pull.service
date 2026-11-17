@@ -1,0 +1,18 @@
+# Keeps the checkout's site/ (what Caddy serves at ngp.one) current with
+# orzelig/ngp-sync main. Writes only site/, never site/update/. Installed and
+# started by provision/vm-setup.sh, which writes /etc/ngp-site-pull.env; run by
+# ngp-site-pull.timer. See docs/runbooks/site-pull.md.
+[Unit]
+Description=Pull ngp.one's site/ from orzelig/ngp-sync main
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+TimeoutStartSec=180
+EnvironmentFile=/etc/ngp-site-pull.env
+ExecStart=/usr/bin/docker run --rm --pull never --read-only --cap-drop ALL \
+  --security-opt no-new-privileges \
+  --user ${NGP_SITE_UID}:${NGP_SITE_GID} \
+  -v /var/lib/ngp-site-pull:/state -v ${NGP_SITE_DIR}:/site ngp-site-pull:local

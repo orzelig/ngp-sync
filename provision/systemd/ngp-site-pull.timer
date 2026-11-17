@@ -1,0 +1,13 @@
+# Every 15 minutes, five minutes after the manifest puller so the two do not
+# run together on the 1 GB VM, plus up to 2 minutes of random delay: a merge to
+# main reaches ngp.one within about 17 minutes. OnCalendar, not
+# OnUnitActiveSec, so a failed run does not stop the next one.
+[Unit]
+Description=Run ngp-site-pull every 15 minutes
+
+[Timer]
+OnCalendar=*:5/15
+RandomizedDelaySec=2min
+
+[Install]
+WantedBy=timers.target
