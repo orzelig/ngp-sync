@@ -120,11 +120,10 @@ The home page's download link and version are still a manual edit.
 
 ## Deploy to GCP (Always Free e2-micro)
 
-**Deployed 2026-11-05:** project `ngp-sync-one` (account or@zelig.me,
-"Or Zelig Supar" billing account), VM `ngp-sync` in `us-central1-a`,
-static IP **34.46.4.190**, stack under the `prod` profile (`DEV_MODE=0`,
-same `SYNC_JWT_SECRET` as the laptop `.env`). Manage it with
-`gcloud --project ngp-sync-one --account or@zelig.me compute ssh ngp-sync --zone us-central1-a`.
+**Deployment:** your own GCP project, VM `ngp-sync` in `us-central1-a`, a
+reserved static IP, stack under the `prod` profile (`DEV_MODE=0`, the same
+`SYNC_JWT_SECRET` as the laptop `.env`). Manage it with
+`gcloud --project <your-gcp-project> --account <your-gcloud-account> compute ssh ngp-sync --zone us-central1-a`.
 Note: an inherited org policy denies VM external IPs; the project carries a
 non-inheriting `compute.vmExternalIpAccess` policy allowing exactly this
 instance.
