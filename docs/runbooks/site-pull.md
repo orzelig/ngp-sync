@@ -54,9 +54,10 @@ each step is safe to repeat:
 5. runs the puller once. If that fails, setup prints
    `first site pull failed; ...` and carries on.
 
-Steps 4 and 5 are skipped when `ngp-site-pull.timer` is masked: setup prints
-`ngp-site-pull.timer is masked; leaving the site puller off ...` and goes on to
-`docker compose up` (see "Turning it off").
+Steps 4 and 5 are skipped while `/etc/ngp-site-pull.off` exists: setup stops
+the timer if it is running, prints
+`ngp-site-pull is off (/etc/ngp-site-pull.off); leaving the site puller off ...`
+and goes on to `docker compose up` (see "Turning it off").
 
 The timer is `OnCalendar=*:5/15` with `RandomizedDelaySec=2min`. That is five
 minutes after the manifest puller, so the two do not run together on the
@@ -74,7 +75,9 @@ systemctl list-timers ngp-site-pull.timer
 journalctl -u ngp-site-pull -n 20
 ```
 
-Each run logs one line:
+Each run logs one `site-pull:` line. systemd then logs its own `Finished` or
+`Failed` record for the unit, so the newest journal entry is systemd's, not the
+puller's; `-g 'site-pull:'` picks out the puller's lines.
 
 | Line | Meaning | Unit result |
 |---|---|---|
@@ -86,7 +89,7 @@ Run it now:
 
 ```bash
 sudo systemctl start ngp-site-pull.service
-journalctl -u ngp-site-pull -n 1
+journalctl -u ngp-site-pull -g 'site-pull:' -n 1
 ```
 
 Compare what is served with `main`: the last `updated to <sha>` or
@@ -94,7 +97,7 @@ Compare what is served with `main`: the last `updated to <sha>` or
 matches. Compare it with `main` on GitHub, and look at the page itself:
 
 ```bash
-journalctl -u ngp-site-pull -n 1
+journalctl -u ngp-site-pull -g 'site-pull:' -n 1
 curl -s https://ngp.one/ | head
 ```
 
@@ -109,7 +112,10 @@ The VM host has no `git`; it is only in the image.
   decision is recorded in ADR 0002.
 - **`failed: fetch: ... Could not resolve host` / `Failed to connect` /
   `context deadline exceeded`**: GitHub or the network is down. Nothing
-  changed, and the next run retries.
+  changed, and the next run retries. A fetch killed at the 120-second timeout
+  (`context deadline exceeded`) can leave a lock in the clone; if the next run
+  then fails with `remove the file manually to continue.`, see the clone
+  bullet below.
 - **`failed: main <sha>: tree has no site/index.html; refusing to apply it`**:
   `main` lost `site/index.html`. Restore it on `main`. The VM keeps serving
   the last good `site/`.
@@ -122,10 +128,12 @@ The VM host has no `git`; it is only in the image.
   `site/` itself changed. Files written before the error stay written. The
   next run finishes the rest.
 - **`failed: ... dubious ownership`, `bad object`, `not a git repository`,
-  `Unable to create '.../repo.git/shallow.lock'` (or any other `*.lock`:
-  `File exists`), or any other git error about the clone**: the clone is
-  corrupt, owned by the wrong user, or holds a lock left by a fetch that was
-  killed at the 120-second timeout. Every later run fails the same way until
+  `failed: fetch: git fetch: exit status 128: remove the file manually to continue.`,
+  or any other git error about the clone**: the clone is corrupt, owned by the
+  wrong user, or holds a lock (`shallow.lock` or another `*.lock` under
+  `repo.git`) left by a fetch that was killed at the 120-second timeout. The
+  journal shows only the last line of git's error, which for a lock is
+  `remove the file manually to continue.` Every later run fails the same way until
   the clone goes. It is disposable:
   `sudo rm -rf /var/lib/ngp-site-pull/repo.git`. The next run rebuilds it, and
   `vm-setup.sh` restores the directory's owner.
@@ -142,8 +150,8 @@ The usual deploy is `gcloud compute scp --recurse . $NAME:~/ngp-sync`, then
 `sudo bash provision/vm-setup.sh`. The `scp` copies your machine's `site/` over
 the VM's, which may be older than `main`. It is served until the
 `systemctl start ngp-site-pull.service` near the end of `vm-setup.sh` puts
-`main` back. That start is in the same run, unless the timer is masked (see
-"Turning it off").
+`main` back. That start is in the same run, unless `/etc/ngp-site-pull.off`
+exists (see "Turning it off").
 
 **A file placed in `site/` on the VM by hand, or an unmerged `site/` change
 deployed by `scp`, is reverted to `main` within one interval.** To serve
@@ -158,7 +166,7 @@ run the puller by hand on the VM:
 
 ```bash
 sudo systemctl start ngp-site-pull.service
-journalctl -u ngp-site-pull -n 1   # updated to <the revert's sha>
+journalctl -u ngp-site-pull -g 'site-pull:' -n 1   # updated to <the revert's sha>
 ```
 
 A hand edit of `site/` on the VM does not last: the next pull puts `main` back.
@@ -176,19 +184,23 @@ sudo systemctl disable --now ngp-site-pull.timer
 `site/` stays as it is. But `vm-setup.sh` enables the timer again and pulls
 `main` once, so a redeploy undoes this.
 
-Across redeploys, mask the timer:
+Across redeploys, stop the timer and create the off-switch file:
 
 ```bash
 sudo systemctl disable --now ngp-site-pull.timer
-sudo systemctl mask ngp-site-pull.timer
+sudo touch /etc/ngp-site-pull.off
 ```
 
-While the timer is masked, `vm-setup.sh` leaves both units as they are, does
-not enable the timer and does not pull. It prints
-`ngp-site-pull.timer is masked; leaving the site puller off and not pulling ...`
+While `/etc/ngp-site-pull.off` exists, `vm-setup.sh` stops the timer if it is
+running, does not install or enable the units, and does not pull. It prints
+`ngp-site-pull is off (/etc/ngp-site-pull.off); leaving the site puller off and not pulling ...`
 and carries on to `docker compose up`. What the redeploy's `scp` copied is what
-is served.
+is served. The file lives outside the checkout, so `scp` does not remove it.
 
-To turn it back on, `sudo systemctl unmask ngp-site-pull.timer` and re-run
+Do not use `systemctl mask` for this: `vm-setup.sh` installs the timer as a
+regular file in `/etc/systemd/system/`, where `mask` refuses to put its
+symlink (`File ... already exists`), and the script does not check for a mask.
+
+To turn it back on, `sudo rm /etc/ngp-site-pull.off` and re-run
 `sudo bash provision/vm-setup.sh`, which installs and enables the units and
 pulls `main` once.

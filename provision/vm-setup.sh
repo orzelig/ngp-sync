@@ -63,13 +63,15 @@ printf 'NGP_SITE_DIR=%s\nNGP_SITE_UID=%s\nNGP_SITE_GID=%s\n' "$(pwd)/site" "$sit
 chmod 0644 /etc/ngp-site-pull.env
 install -d -o "$site_uid" -g "$site_gid" -m 0755 /var/lib/ngp-site-pull
 chown -R "$site_uid:$site_gid" /var/lib/ngp-site-pull
-# A masked timer is the operator's way to keep the puller off across redeploys
-# (docs/runbooks/site-pull.md): leave the units alone and do not pull. The
-# `|| true` is because is-enabled exits non-zero for masked, and for not-found
-# on the first run, which set -e would otherwise turn into a failed setup.
-site_pull_timer_state="$(systemctl is-enabled ngp-site-pull.timer 2>/dev/null || true)"
-if [ "$site_pull_timer_state" = masked ]; then
-  echo "ngp-site-pull.timer is masked; leaving the site puller off and not pulling (systemctl unmask ngp-site-pull.timer, then re-run this script, turns it back on)"
+# /etc/ngp-site-pull.off is the operator's way to keep the puller off across
+# redeploys (docs/runbooks/site-pull.md). It is a file this script owns, not a
+# systemd mask: `systemctl mask` cannot replace the regular unit file the
+# install below writes into /etc/systemd/system. While it exists, make sure the
+# timer is stopped (`|| true`: on a first run there is no unit to disable), do
+# not install or enable the units, and do not pull.
+if [ -e /etc/ngp-site-pull.off ]; then
+  systemctl disable --now ngp-site-pull.timer 2>/dev/null || true
+  echo "ngp-site-pull is off (/etc/ngp-site-pull.off); leaving the site puller off and not pulling (remove that file, then re-run this script, to turn it back on)"
 else
   install -m 0644 provision/systemd/ngp-site-pull.service provision/systemd/ngp-site-pull.timer /etc/systemd/system/
   systemctl daemon-reload
