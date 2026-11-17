@@ -20,8 +20,11 @@ systemd timer that runs a one-shot container every 15 minutes.
   `/var/lib/ngp-update` on a fresh VM. A release no longer needs to commit the
   manifest to ngp-sync `main`. The file stays in the tree: it is the seed, and
   its directory is the mountpoint Caddy's mount lands on.
-- `site/index.html`'s download link and version are separate and are still a
-  manual edit.
+- `site/index.html` reads its download link and version from the served
+  `/update/macos-arm64.json` when it loads, so a manifest this puller installs
+  shows on the page with no edit. The link and version hard-coded in its markup
+  are only the fallback, shown when the manifest cannot be read or is
+  incomplete (ADR 0003).
 
 ## How it is installed
 

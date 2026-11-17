@@ -81,12 +81,12 @@
   <h1>NGP Browser</h1>
   <p class="tag">The open-source browser built for people who use X.</p>
   <div class="actions">
-    <a class="btn btn-dl" href="https://github.com/orzelig/ngp-releases/releases/download/v156.0.8078.79-ngp.29/NGP-156.0.8078.79-ngp.29.dmg">
+    <a id="dl" class="btn btn-dl" href="https://github.com/orzelig/ngp-releases/releases/download/v156.0.8078.79-ngp.29/NGP-156.0.8078.79-ngp.29.dmg">
       Download for macOS&nbsp;·&nbsp;Apple&nbsp;Silicon</a>
     <a class="btn btn-gh" href="https://github.com/orzelig/ngp-browser">Source on GitHub</a>
   </div>
   <p class="fine">
-    Version 156.0.8078.79-ngp.29 · early build, not yet notarized by Apple.
+    Version <span id="ver">156.0.8078.79-ngp.29</span> · early build, not yet notarized by Apple.
     After moving NGP to Applications, the first launch is blocked with
     &ldquo;Apple could not verify&hellip;&rdquo; &mdash; open
     <code>System&nbsp;Settings → Privacy&nbsp;&amp;&nbsp;Security</code>, scroll to
@@ -97,5 +97,26 @@
 </main>
 
 <footer>© 2026 NGP · <a href="https://id.ngp.one/account">Account</a> · <a href="/terms.html">Terms</a> · <a href="/privacy.html">Privacy</a></footer>
+<script>
+  // Show the release the VM's puller verified and installed (ADR 0003). The
+  // link and version above are the fallback: anything short of a whole
+  // manifest leaves them as they are.
+  fetch('/update/macos-arm64.json', { cache: 'no-store' })
+    .then(function (res) {
+      if (!res.ok) throw new Error('manifest: HTTP ' + res.status);
+      return res.json();
+    })
+    .then(function (m) {
+      if (!m || typeof m !== 'object') return;
+      if (typeof m.url !== 'string' || m.url === '') return;
+      if (typeof m.version !== 'string' || m.version === '') return;
+      var dl = document.getElementById('dl');
+      var ver = document.getElementById('ver');
+      if (!dl || !ver) return;
+      dl.href = m.url;
+      ver.textContent = m.version;
+    })
+    .catch(function () {});
+</script>
 </body>
 </html>
