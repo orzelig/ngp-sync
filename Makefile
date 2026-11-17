@@ -3,8 +3,9 @@
 # .github/workflows/ci.yml.
 #
 # `ci` checks what a Linux computer can check on its own: the identity service
-# (gofmt, vet, tests) and the update manifest's JSON. gosync needs DynamoDB and
-# Redis and is checked by hand with docker compose (AGENTS.md).
+# (gofmt, vet, tests), the update manifest's JSON, and the download page's
+# script (`node --test`, so `ci` needs Node 18 or newer on the PATH). gosync
+# needs DynamoDB and Redis and is checked by hand with docker compose (AGENTS.md).
 
 GO_VERSION := 1.27.0
 # The crew's computers are Debian with no Go, so `setup` puts one under the
@@ -40,6 +41,10 @@ test:
 	cd identity && $(GO) test ./...
 
 # The browser reads this file to decide whether to update: it has to parse.
+# The download page fills its link and version from the served manifest; its
+# test runs the page's real script against a stubbed fetch (ADR 0003).
 site:
 	@for f in site/update/*.json; do python3 -m json.tool "$$f" > /dev/null || { echo "site: $$f is not valid JSON"; exit 1; }; done; \
 	echo "site: update manifests parse"
+	@command -v node >/dev/null 2>&1 || { echo "site: node is not on the PATH; site/index.test.js needs Node 18 or newer" >&2; exit 1; }
+	node --test site/index.test.js

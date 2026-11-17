@@ -116,7 +116,10 @@ seeds an empty directory on a fresh VM, so a release no longer needs to commit
 the manifest here, and a redeploy never puts an older one back. See
 [`docs/runbooks/manifest-pull.md`](docs/runbooks/manifest-pull.md) and
 [ADR 0001](docs/adr/0001-update-manifest-served-from-vm-only-directory.md).
-The home page's download link and version are still a manual edit.
+The home page fills its download link and version from `/update/macos-arm64.json`
+when it loads, so an installed release shows there with no edit; the values
+hard-coded in `site/index.html` are only the fallback shown when the manifest
+cannot be read ([ADR 0003](docs/adr/0003-download-page-reads-the-update-manifest.md)).
 
 ## Deploy to GCP (Always Free e2-micro)
 

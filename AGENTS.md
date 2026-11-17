@@ -9,7 +9,7 @@ before changing it, and what Or has to look at before it merges.
 |---|---|
 | `identity/` | The identity service (Go, `ngp.one/identity`): sign-in with X, the account page at id.ngp.one, device linking, and the settings-reset telemetry endpoint |
 | `gosync/` | Brave's go-sync, built from its image with `0001-ngp-jwt-auth.patch` applied: the sync server |
-| `site/` | ngp.one, static HTML served by Caddy |
+| `site/` | ngp.one, static HTML served by Caddy; the download page reads its link and version from the served update manifest (ADR 0003) |
 | `site/update/` | The browser's signed update manifest: now only the seed for an empty `/var/lib/ngp-update` on the VM, which is what ngp.one serves. Never edited by hand |
 | `identity/cmd/manifest-pull/` | The VM's update-manifest puller: verifies the latest `orzelig/ngp-releases` manifest against a pinned key and installs it into `/var/lib/ngp-update` (ADR 0001, `docs/runbooks/manifest-pull.md`) |
 | `identity/cmd/site-pull/` | The VM's site puller: fetches `orzelig/ngp-sync` `main` anonymously into `/var/lib/ngp-site-pull` and makes the checkout's `site/` match it, file by file, never touching `site/update/` (ADR 0002, `docs/runbooks/site-pull.md`) |
@@ -20,8 +20,15 @@ before changing it, and what Or has to look at before it merges.
 
 ```bash
 make setup   # puts Go 1.27 under ~/.cache when none is on the PATH
-make ci      # identity: gofmt, go vet, go test; site: the update manifests parse
+make ci      # identity: gofmt, go vet, go test; site: the update manifests parse, node --test site/index.test.js
 ```
+
+`make ci` needs Node 18 or newer on the PATH (`make setup` does not install
+it); without it the `site` target fails and says so. `site/index.html` fills
+its download link (`id="dl"`) and version (`id="ver"`) from
+`/update/macos-arm64.json` with its one inline script, the hard-coded values
+being the fallback (ADR 0003). Tests for `site/` use Node built-ins only and run
+the page's real script; there is no `package.json`.
 
 `make ci` is what CI runs, and it must be green before a pull request opens.
 It does not cover gosync, which needs DynamoDB and Redis:
