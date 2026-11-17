@@ -119,7 +119,7 @@ gcloud compute ssh $NAME -- 'sudo cp /tmp/macos-arm64.json /var/lib/ngp-update/.
 ```
 
 `$NAME` is the VM's name, as in `provision/gcloud.sh`. The live one is
-`ngp-sync`, in project `ngp-sync-one` (zone `us-central1-a`).
+`ngp-sync`, in your GCP project (zone `us-central1-a`).
 
 ## Taking a release back
 
