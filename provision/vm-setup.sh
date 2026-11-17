@@ -63,14 +63,23 @@ printf 'NGP_SITE_DIR=%s\nNGP_SITE_UID=%s\nNGP_SITE_GID=%s\n' "$(pwd)/site" "$sit
 chmod 0644 /etc/ngp-site-pull.env
 install -d -o "$site_uid" -g "$site_gid" -m 0755 /var/lib/ngp-site-pull
 chown -R "$site_uid:$site_gid" /var/lib/ngp-site-pull
-install -m 0644 provision/systemd/ngp-site-pull.service provision/systemd/ngp-site-pull.timer /etc/systemd/system/
-systemctl daemon-reload
-systemctl enable --now ngp-site-pull.timer
-# Pull once now: this also corrects a site/ the redeploy just put back to an
-# older state. A failed pull (repository not public yet, GitHub down) must not
-# fail the setup: the timer retries.
-systemctl start ngp-site-pull.service ||
-  echo "first site pull failed; the timer retries every 15 minutes (journalctl -u ngp-site-pull)"
+# A masked timer is the operator's way to keep the puller off across redeploys
+# (docs/runbooks/site-pull.md): leave the units alone and do not pull. The
+# `|| true` is because is-enabled exits non-zero for masked, and for not-found
+# on the first run, which set -e would otherwise turn into a failed setup.
+site_pull_timer_state="$(systemctl is-enabled ngp-site-pull.timer 2>/dev/null || true)"
+if [ "$site_pull_timer_state" = masked ]; then
+  echo "ngp-site-pull.timer is masked; leaving the site puller off and not pulling (systemctl unmask ngp-site-pull.timer, then re-run this script, turns it back on)"
+else
+  install -m 0644 provision/systemd/ngp-site-pull.service provision/systemd/ngp-site-pull.timer /etc/systemd/system/
+  systemctl daemon-reload
+  systemctl enable --now ngp-site-pull.timer
+  # Pull once now: this also corrects a site/ the redeploy just put back to an
+  # older state. A failed pull (repository not public yet, GitHub down) must
+  # not fail the setup: the timer retries.
+  systemctl start ngp-site-pull.service ||
+    echo "first site pull failed; the timer retries every 15 minutes (journalctl -u ngp-site-pull)"
+fi
 
 docker compose --profile prod up -d --build
 docker compose ps

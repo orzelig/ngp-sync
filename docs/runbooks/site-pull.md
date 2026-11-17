@@ -54,6 +54,10 @@ each step is safe to repeat:
 5. runs the puller once. If that fails, setup prints
    `first site pull failed; ...` and carries on.
 
+Steps 4 and 5 are skipped when `ngp-site-pull.timer` is masked: setup prints
+`ngp-site-pull.timer is masked; leaving the site puller off ...` and goes on to
+`docker compose up` (see "Turning it off").
+
 The timer is `OnCalendar=*:5/15` with `RandomizedDelaySec=2min`. That is five
 minutes after the manifest puller, so the two do not run together on the
 1 GB VM.
@@ -85,12 +89,16 @@ sudo systemctl start ngp-site-pull.service
 journalctl -u ngp-site-pull -n 1
 ```
 
-Compare what is served with `main`:
+Compare what is served with `main`: the last `updated to <sha>` or
+`current at <sha>` line in the journal is the commit of `main` that `site/`
+matches. Compare it with `main` on GitHub, and look at the page itself:
 
 ```bash
+journalctl -u ngp-site-pull -n 1
 curl -s https://ngp.one/ | head
-git -C /var/lib/ngp-site-pull/repo.git log -1 --oneline refs/remotes/origin/main   # run as the owner of site/
 ```
+
+The VM host has no `git`; it is only in the image.
 
 ## Failure modes
 
@@ -113,9 +121,12 @@ git -C /var/lib/ngp-site-pull/repo.git log -1 --oneline refs/remotes/origin/main
   `sudo chown -R <uid>:<gid> site`, or re-run `vm-setup.sh` if the owner of
   `site/` itself changed. Files written before the error stay written. The
   next run finishes the rest.
-- **`failed: ... dubious ownership`, `bad object`, `not a git repository`, or
-  any other git error about the clone**: the clone is corrupt or owned by the
-  wrong user. It is disposable:
+- **`failed: ... dubious ownership`, `bad object`, `not a git repository`,
+  `Unable to create '.../repo.git/shallow.lock'` (or any other `*.lock`:
+  `File exists`), or any other git error about the clone**: the clone is
+  corrupt, owned by the wrong user, or holds a lock left by a fetch that was
+  killed at the 120-second timeout. Every later run fails the same way until
+  the clone goes. It is disposable:
   `sudo rm -rf /var/lib/ngp-site-pull/repo.git`. The next run rebuilds it, and
   `vm-setup.sh` restores the directory's owner.
 - **`failed: site directory: ...`**: `/etc/ngp-site-pull.env` points at a
@@ -131,19 +142,53 @@ The usual deploy is `gcloud compute scp --recurse . $NAME:~/ngp-sync`, then
 `sudo bash provision/vm-setup.sh`. The `scp` copies your machine's `site/` over
 the VM's, which may be older than `main`. It is served until the
 `systemctl start ngp-site-pull.service` near the end of `vm-setup.sh` puts
-`main` back. That start is in the same run.
+`main` back. That start is in the same run, unless the timer is masked (see
+"Turning it off").
 
 **A file placed in `site/` on the VM by hand, or an unmerged `site/` change
 deployed by `scp`, is reverted to `main` within one interval.** To serve
 something else for a while, turn the puller off first (below).
 
+## Rolling back a bad `site/` change
+
+`main` is the deploy for `site/`, so a rollback is a revert on `main`: revert
+the change in a pull request and merge it. That needs no approval beyond the
+revert's own merge. To serve it at once rather than within about 17 minutes,
+run the puller by hand on the VM:
+
+```bash
+sudo systemctl start ngp-site-pull.service
+journalctl -u ngp-site-pull -n 1   # updated to <the revert's sha>
+```
+
+A hand edit of `site/` on the VM does not last: the next pull puts `main` back.
+To hold the VM on something other than `main` while the revert is on its way,
+turn the puller off first (below).
+
 ## Turning it off
+
+Until the next redeploy:
 
 ```bash
 sudo systemctl disable --now ngp-site-pull.timer
 ```
 
-`site/` stays as it is, and the next redeploy's `scp` is what is served. Note
-that `vm-setup.sh` enables the timer again. To leave it off across redeploys,
-also `sudo systemctl mask ngp-site-pull.timer`. Undo that with
-`sudo systemctl unmask ngp-site-pull.timer` and re-run `vm-setup.sh`.
+`site/` stays as it is. But `vm-setup.sh` enables the timer again and pulls
+`main` once, so a redeploy undoes this.
+
+Across redeploys, mask the timer:
+
+```bash
+sudo systemctl disable --now ngp-site-pull.timer
+sudo systemctl mask ngp-site-pull.timer
+```
+
+While the timer is masked, `vm-setup.sh` leaves both units as they are, does
+not enable the timer and does not pull. It prints
+`ngp-site-pull.timer is masked; leaving the site puller off and not pulling ...`
+and carries on to `docker compose up`. What the redeploy's `scp` copied is what
+is served.
+
+To turn it back on, `sudo systemctl unmask ngp-site-pull.timer` and re-run
+`sudo bash provision/vm-setup.sh`, which installs and enables the units and
+pulls `main` once.
