@@ -11,8 +11,8 @@
 # Override the target with NGP_PROJECT / NGP_ACCOUNT / NGP_ZONE / NGP_VM.
 set -euo pipefail
 
-PROJECT="${NGP_PROJECT:-ngp-sync-one}"
-ACCOUNT="${NGP_ACCOUNT:-or@zelig.me}"
+PROJECT="${NGP_PROJECT:?set NGP_PROJECT to your GCP project}"
+ACCOUNT="${NGP_ACCOUNT:?set NGP_ACCOUNT to your gcloud account}"
 ZONE="${NGP_ZONE:-us-central1-a}"
 VM="${NGP_VM:-ngp-sync}"
 
