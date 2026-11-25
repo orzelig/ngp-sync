@@ -118,6 +118,7 @@ func main() {
 	mux.HandleFunc("POST /account/revoke", app.handleRevoke)
 	mux.HandleFunc("POST /account/revoke-all", app.handleRevokeAll)
 	mux.HandleFunc("POST /account/logout", app.handleLogout)
+	app.registerPairRoutes(mux) // add a phone: POST /account/phone, GET /pair, GET /me (pair.go)
 
 	// Anonymous, hardened telemetry sink (see telemetry.go). Currently the
 	// opt-in settings-reset report the NGP browser POSTs. Decoupled from the
@@ -217,10 +218,7 @@ func (a *App) handleCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	deviceCode := randHex(4) // 8 hex chars, single-use, short-lived
-	a.mu.Lock()
-	a.linkCodes[deviceCode] = linkEntry{XID: xid, Expires: time.Now().Add(linkCodeTTL)}
-	a.mu.Unlock()
+	deviceCode := a.mintLinkCode(xid) // 8 hex chars, single-use, short-lived
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_ = linkPageTmpl.Execute(w, map[string]string{
@@ -292,19 +290,8 @@ func clampTTLDays(days int) time.Duration {
 }
 
 func (a *App) handleVerify(w http.ResponseWriter, r *http.Request) {
-	const prefix = "Bearer "
-	h := r.Header.Get("Authorization")
-	if !strings.HasPrefix(h, prefix) {
-		jsonError(w, http.StatusUnauthorized, "missing bearer token")
-		return
-	}
-	claims, err := VerifyJWT(a.cfg.JWTSecret, strings.TrimPrefix(h, prefix))
-	if err != nil {
-		jsonError(w, http.StatusUnauthorized, err.Error())
-		return
-	}
-	if claims.Aud != jwtAudience {
-		jsonError(w, http.StatusUnauthorized, "wrong audience")
+	claims, ok := a.bearerClaims(w, r)
+	if !ok {
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -398,10 +385,7 @@ func (a *App) handleDevEnroll(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	a.setSession(w, xid)
-	deviceCode := randHex(4)
-	a.mu.Lock()
-	a.linkCodes[deviceCode] = linkEntry{XID: xid, Expires: time.Now().Add(linkCodeTTL)}
-	a.mu.Unlock()
+	deviceCode := a.mintLinkCode(xid)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_ = linkPageTmpl.Execute(w, map[string]string{
 		"Username": "devuser",
@@ -686,6 +670,10 @@ var accountTmpl = template.Must(template.New("account").Parse(`<!doctype html>
   {{else}}
     <div class="card"><p class="note">No devices are linked yet. Open <b>id.ngp.one/login</b> in the NGP browser and click <b>Enable sync</b>.</p></div>
   {{end}}
+  <form class="actions" method="post" action="/account/phone">
+    <input type="hidden" name="csrf" value="{{.CSRF}}">
+    <button type="submit">Add a phone</button>
+  </form>
 
   <div class="actions">
     {{if .Devices}}

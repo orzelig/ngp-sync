@@ -358,3 +358,14 @@ test('contrast: every text token is at least 4.5:1 on the background and on each
   const onAccent = contrast(bg, rgba(t['--ngp-accent']));
   assert.ok(onAccent >= 4.5, `--ngp-bg on --ngp-accent is ${onAccent.toFixed(2)}:1`);
 });
+
+// ngp-sync#14: the privacy policy says what NGP Phone shares when it joins.
+test('privacy.html: says what NGP Phone shares when it joins the account', () => {
+  const src = fs.readFileSync(path.join(SITE, 'privacy.html'), 'utf8');
+  const item = [...src.matchAll(/<li>([\s\S]*?)<\/li>/g)].map((m) => m[1].replace(/\s+/g, ' '))
+    .find((li) => li.includes('NGP Phone'));
+  assert.ok(item, 'a "What we collect" item names NGP Phone');
+  for (const phrase of ['device name', 'sign-in tokens', 'Nothing else from the phone reaches ngp.one']) {
+    assert.ok(item.includes(phrase), `the NGP Phone item says "${phrase}"`);
+  }
+});

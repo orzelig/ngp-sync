@@ -77,6 +77,9 @@ refresh token + a short-lived access JWT.
 | `POST /device/link` | `{"code","device","ttl_days"?}` → `{account_id, refresh_token, access_token}` |
 | `POST /token`       | `{"refresh_token","ttl_days"?}` → fresh access JWT                |
 | `GET /verify`       | `Authorization: Bearer <jwt>` → claims (same check go-sync does)  |
+| `POST /account/phone` | account page (session + CSRF): mints a one-time link code and shows it as a QR of `<BASE_URL>/pair?code=<code>` and as text |
+| `GET /pair`         | static page for camera apps: "open NGP on your phone and scan this code there"; never reads or spends a code |
+| `GET /me`           | `Authorization: Bearer <jwt>` → `{handle, name, avatar}` (`name` is the handle for now) |
 
 `ttl_days` (optional, clamped to 90) mints a long-lived access token — the
 browser patch reads one static token from a file and has no refresh loop yet.
