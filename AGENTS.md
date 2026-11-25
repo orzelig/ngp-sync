@@ -10,6 +10,7 @@ before changing it, and what Or has to look at before it merges.
 | `identity/` | The identity service (Go, `ngp.one/identity`): sign-in with X, the account page at id.ngp.one, device linking, and the settings-reset telemetry endpoint |
 | `gosync/` | Brave's go-sync, built from its image with `0001-ngp-jwt-auth.patch` applied: the sync server |
 | `site/` | ngp.one, static HTML served by Caddy; the download page reads its link and version from the served update manifest (ADR 0003) |
+| `site/tokens.css` | The design-token source: NGP's design3 colours, glass layers, type sizes and font stack as `--ngp-*` custom properties, in one `:root` rule and nothing else (ADR 0004) |
 | `site/update/` | The browser's signed update manifest: now only the seed for an empty `/var/lib/ngp-update` on the VM, which is what ngp.one serves. Never edited by hand |
 | `identity/cmd/manifest-pull/` | The VM's update-manifest puller: verifies the latest `orzelig/ngp-releases` manifest against a pinned key and installs it into `/var/lib/ngp-update` (ADR 0001, `docs/runbooks/manifest-pull.md`) |
 | `identity/cmd/site-pull/` | The VM's site puller: fetches `orzelig/ngp-sync` `main` anonymously into `/var/lib/ngp-site-pull` and makes the checkout's `site/` match it, file by file, never touching `site/update/` (ADR 0002, `docs/runbooks/site-pull.md`) |
@@ -28,7 +29,16 @@ it); without it the `site` target fails and says so. `site/index.html` fills
 its download link (`id="dl"`) and version (`id="ver"`) from
 `/update/macos-arm64.json` with its one inline script, the hard-coded values
 being the fallback (ADR 0003). Tests for `site/` use Node built-ins only and run
-the page's real script; there is no `package.json`.
+the page's real script; there is no `package.json`. All of them live in
+`site/index.test.js`, since the `Makefile` runs that file by name.
+
+Every `site/*.html` links `/tokens.css` before its own `<style>` and
+hard-codes no colour, font size or font family: it uses `var(--ngp-…)` only, the
+one literal being the `theme-color` meta, which must equal `--ngp-bg`. The site
+is always dark, with one accent (`--ngp-accent`), orange only in the brand mark,
+and no `transition`, `animation`, `@keyframes` or `prefers-color-scheme`
+(ADR 0004). `site/index.test.js` checks all of this for every page it finds,
+and checks the text tokens' contrast.
 
 `make ci` is what CI runs, and it must be green before a pull request opens.
 It does not cover gosync, which needs DynamoDB and Redis:

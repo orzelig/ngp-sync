@@ -10,46 +10,48 @@
 <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16.png">
 <link rel="icon" href="/favicon.ico" sizes="any">
 <link rel="apple-touch-icon" href="/apple-touch-icon.png">
-<meta name="theme-color" content="#EE5A05">
+<meta name="theme-color" content="#000000">
+<link rel="stylesheet" href="/tokens.css">
 <style>
-  :root {
-    --orange: #EE5A05; --orange-hi: #FF8A2A; --green: #13B45A;
-    --ink: #1b1b1f; --mut: #6b6b74; --bg: #fafafa; --card: #ffffff;
-  }
+  /* Every colour, size and font comes from /tokens.css (ADR 0004). */
+  :root { color-scheme: dark; }
   * { margin: 0; padding: 0; box-sizing: border-box; }
-  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
-         background: var(--bg); color: var(--ink); min-height: 100vh; display: flex; flex-direction: column; }
-  header { display: flex; align-items: center; justify-content: space-between;
+  html { background: var(--ngp-bg); }
+  body { font-family: var(--ngp-font); background: var(--ngp-bg); color: var(--ngp-text);
+         min-height: 100vh; display: flex; flex-direction: column; }
+  header { display: flex; align-items: center; justify-content: space-between; gap: 12px;
            padding: 18px 28px; }
-  .brand { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 18px; }
+  .brand { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: var(--ngp-size-17); }
   .brand svg { display: block; }
-  .account { text-decoration: none; color: var(--ink); font-weight: 600; font-size: 14px;
-             border: 1.5px solid #d9d9de; border-radius: 10px; padding: 9px 16px;
-             transition: border-color .15s, color .15s; }
-  .account:hover { border-color: var(--orange); color: var(--orange); }
+  .mark-hi { stop-color: var(--ngp-brand-hi); }
+  .mark-lo { stop-color: var(--ngp-brand-lo); }
+  .mark-ring { fill: var(--ngp-brand-ring); }
+  .mark-core { fill: var(--ngp-brand-core); }
+  .account { text-decoration: none; color: var(--ngp-text); font-weight: 600; font-size: var(--ngp-size-14);
+             background: var(--ngp-glass-2); border: 1px solid var(--ngp-hairline);
+             border-radius: 10px; padding: 9px 16px; }
+  .account:hover { border-color: var(--ngp-accent); color: var(--ngp-accent); }
   main { flex: 1; display: flex; flex-direction: column; align-items: center;
          justify-content: center; text-align: center; padding: 48px 24px 64px; }
-  .logo-hero { width: 128px; height: 128px; margin-bottom: 28px;
-               filter: drop-shadow(0 12px 28px rgba(238, 90, 5, .25)); }
-  h1 { font-size: 44px; letter-spacing: -0.5px; margin-bottom: 12px; }
-  .tag { font-size: 18px; color: var(--mut); max-width: 520px; line-height: 1.5; margin-bottom: 36px; }
+  .logo-hero { width: 128px; height: 128px; margin-bottom: 28px; }
+  h1 { font-size: var(--ngp-size-40); letter-spacing: -0.5px; margin-bottom: 12px; color: var(--ngp-text); }
+  .tag { font-size: var(--ngp-size-17); color: var(--ngp-text-2); max-width: 520px; line-height: 1.5; margin-bottom: 36px; }
   .actions { display: flex; gap: 14px; flex-wrap: wrap; justify-content: center; margin-bottom: 18px; }
-  .btn { text-decoration: none; font-weight: 650; font-size: 15px; border-radius: 12px;
-         padding: 14px 24px; transition: transform .1s, box-shadow .15s; display: inline-block; }
-  .btn:active { transform: translateY(1px); }
-  .btn-dl { background: linear-gradient(180deg, var(--orange-hi), var(--orange)); color: #fff;
-            box-shadow: 0 6px 18px rgba(238, 90, 5, .35); }
-  .btn-dl:hover { box-shadow: 0 8px 24px rgba(238, 90, 5, .45); }
-  .btn-gh { background: var(--card); color: var(--ink); border: 1.5px solid #d9d9de; }
-  .btn-gh:hover { border-color: var(--ink); }
-  .fine { font-size: 13px; color: var(--mut); line-height: 1.7; max-width: 560px; }
-  .fine code { background: #efeff2; border-radius: 5px; padding: 1px 6px; font-size: 12px; }
-  footer { text-align: center; padding: 22px; font-size: 12.5px; color: var(--mut); }
-  footer a { color: var(--mut); }
-  @media (prefers-color-scheme: dark) {
-    :root { --ink: #ececf0; --mut: #9a9aa4; --bg: #131316; --card: #1d1d22; }
-    .account, .btn-gh { border-color: #3a3a42; }
-    .fine code { background: #26262c; }
+  .btn { text-decoration: none; font-weight: 650; font-size: var(--ngp-size-15); border-radius: 12px;
+         padding: 14px 24px; display: inline-block; border: 1px solid var(--ngp-hairline); }
+  .btn-dl { background: var(--ngp-accent); color: var(--ngp-bg); border-color: var(--ngp-accent); }
+  .btn-gh { background: var(--ngp-glass-2); color: var(--ngp-text); }
+  .btn-gh:hover { border-color: var(--ngp-text-2); }
+  .fine { font-size: var(--ngp-size-14); color: var(--ngp-text-2); line-height: 1.7; max-width: 560px; }
+  .fine b { color: var(--ngp-text); }
+  .fine code { background: var(--ngp-glass-3); border: 1px solid var(--ngp-hairline); border-radius: 5px;
+               padding: 1px 6px; font-size: var(--ngp-size-12); color: var(--ngp-text); }
+  .quiet { color: inherit; }
+  footer { text-align: center; padding: 22px; font-size: var(--ngp-size-12); color: var(--ngp-text-3); }
+  footer a { color: var(--ngp-text-3); }
+  @media (max-width: 420px) {
+    header { padding: 16px 18px; }
+    main { padding: 40px 18px 56px; }
   }
 </style>
 </head>
@@ -58,11 +60,11 @@
   <div class="brand">
     <svg width="28" height="28" viewBox="0 0 1024 1024" aria-hidden="true">
       <defs><radialGradient id="o" cx="38%" cy="30%" r="85%">
-        <stop offset="0%" stop-color="#FF8A2A"/><stop offset="100%" stop-color="#EE5A05"/>
+        <stop offset="0%" class="mark-hi"/><stop offset="100%" class="mark-lo"/>
       </radialGradient></defs>
       <circle cx="512" cy="512" r="480" fill="url(#o)"/>
-      <circle cx="512" cy="512" r="262" fill="#fff"/>
-      <circle cx="512" cy="512" r="198" fill="#13B45A"/>
+      <circle cx="512" cy="512" r="262" class="mark-ring"/>
+      <circle cx="512" cy="512" r="198" class="mark-core"/>
     </svg>
     NGP
   </div>
@@ -72,11 +74,11 @@
 <main>
   <svg class="logo-hero" viewBox="0 0 1024 1024" aria-hidden="true">
     <defs><radialGradient id="oh" cx="38%" cy="30%" r="85%">
-      <stop offset="0%" stop-color="#FF8A2A"/><stop offset="100%" stop-color="#EE5A05"/>
+      <stop offset="0%" class="mark-hi"/><stop offset="100%" class="mark-lo"/>
     </radialGradient></defs>
     <circle cx="512" cy="512" r="480" fill="url(#oh)"/>
-    <circle cx="512" cy="512" r="262" fill="#fff"/>
-    <circle cx="512" cy="512" r="198" fill="#13B45A"/>
+    <circle cx="512" cy="512" r="262" class="mark-ring"/>
+    <circle cx="512" cy="512" r="198" class="mark-core"/>
   </svg>
   <h1>NGP Browser</h1>
   <p class="tag">The open-source browser built for people who use X.</p>
@@ -92,7 +94,7 @@
     <code>System&nbsp;Settings → Privacy&nbsp;&amp;&nbsp;Security</code>, scroll to
     <b>Security</b>, and click <code>Open&nbsp;Anyway</code>.<br>
     The browser updates itself from this site. Based on
-    <a href="https://github.com/ungoogled-software/ungoogled-chromium" style="color:inherit">ungoogled-chromium</a>.
+    <a href="https://github.com/ungoogled-software/ungoogled-chromium" class="quiet">ungoogled-chromium</a>.
   </p>
 </main>
 
