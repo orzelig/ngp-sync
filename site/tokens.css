@@ -1,0 +1,31 @@
+/* NGP design tokens (design3), shared by every page on ngp.one. Custom
+   properties only, in one :root rule, so the browser and the phone can share
+   this file later (ADR 0004). */
+:root {
+  --ngp-bg: #000000;
+  --ngp-text: #FFFFFF;
+  --ngp-text-2: #C3C9D4;
+  --ngp-text-3: #A1A1A6;
+  --ngp-text-4: #8A8A90;
+  --ngp-hairline: rgba(255, 255, 255, 0.14);
+  --ngp-glass-1: rgba(16, 16, 18, 0.92);
+  --ngp-glass-2: rgba(22, 22, 24, 0.92);
+  --ngp-glass-3: rgba(34, 34, 38, 0.92);
+  --ngp-urgent: #FFB4A0;
+  --ngp-urgent-soft: #E3BFB4;
+  --ngp-ok: #7DDB9C;
+  --ngp-accent: #9CC8FF;
+  --ngp-brand-hi: #FF8A2A;
+  --ngp-brand-lo: #EE5A05;
+  --ngp-brand-ring: #FFFFFF;
+  --ngp-brand-core: #13B45A;
+  --ngp-size-40: 40px;
+  --ngp-size-28: 28px;
+  --ngp-size-20: 20px;
+  --ngp-size-17: 17px;
+  --ngp-size-15: 15px;
+  --ngp-size-14: 14px;
+  --ngp-size-12: 12px;
+  --ngp-size-11: 11px;
+  --ngp-font: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+}

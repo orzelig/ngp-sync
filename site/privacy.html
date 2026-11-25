@@ -8,22 +8,28 @@
 <link rel="icon" type="image/svg+xml" href="/favicon.svg">
 <link rel="icon" href="/favicon.ico" sizes="any">
 <link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<meta name="theme-color" content="#000000">
+<link rel="stylesheet" href="/tokens.css">
 <style>
-  :root { --orange:#EE5A05; --ink:#1b1b1f; --mut:#6b6b74; --bg:#fafafa; }
+  /* Every colour, size and font comes from /tokens.css (ADR 0004). */
+  :root { color-scheme: dark; }
   * { margin:0; padding:0; box-sizing:border-box; }
-  body { font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif;
-         background:var(--bg); color:var(--ink); line-height:1.65; }
-  main { max-width:720px; margin:0 auto; padding:48px 24px 80px; }
-  h1 { font-size:30px; margin-bottom:4px; }
-  .date { color:var(--mut); font-size:14px; margin-bottom:32px; }
-  h2 { font-size:19px; margin:28px 0 8px; }
-  p, li { font-size:15px; color:#333; margin-bottom:10px; }
+  html { background:var(--ngp-bg); }
+  body { font-family:var(--ngp-font); background:var(--ngp-bg); color:var(--ngp-text);
+         line-height:1.65; padding:32px 16px 64px; }
+  main { max-width:720px; margin:0 auto; padding:40px 40px 48px;
+         background:var(--ngp-glass-1); border:1px solid var(--ngp-hairline); border-radius:20px; }
+  h1 { font-size:var(--ngp-size-28); color:var(--ngp-text); margin-bottom:4px; }
+  .date { color:var(--ngp-text-3); font-size:var(--ngp-size-14); margin-bottom:32px; }
+  h2 { font-size:var(--ngp-size-20); color:var(--ngp-text); margin:28px 0 8px; }
+  p, li { font-size:var(--ngp-size-15); color:var(--ngp-text-2); margin-bottom:10px; }
+  strong { color:var(--ngp-text); }
   ul { padding-left:22px; margin-bottom:10px; }
-  a { color:var(--orange); }
-  .top { font-size:14px; margin-bottom:24px; display:inline-block; }
-  @media (prefers-color-scheme: dark) {
-    :root { --ink:#ececf0; --mut:#9a9aa4; --bg:#131316; }
-    p, li { color:#c9c9d1; }
+  a { color:var(--ngp-accent); overflow-wrap:anywhere; }
+  .top { font-size:var(--ngp-size-14); margin-bottom:24px; display:inline-block; }
+  @media (max-width:600px) {
+    body { padding:12px 8px 40px; }
+    main { padding:28px 18px 32px; border-radius:16px; }
   }
 </style>
 </head>
