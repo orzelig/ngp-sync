@@ -26,6 +26,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -173,16 +174,27 @@ func (a *App) handleLogin(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "X_CLIENT_ID / X_CLIENT_SECRET are not configured yet", http.StatusServiceUnavailable)
 		return
 	}
-	next := r.URL.Query().Get("next")
-	if !strings.HasPrefix(next, "/") || strings.HasPrefix(next, "//") {
-		next = "" // only same-site absolute paths; no open redirects
-	}
+	next := safeNext(r.URL.Query().Get("next"))
 	state := randHex(16)
 	verifier := randHex(32) // 64 chars — within PKCE's 43–128 requirement
 	a.mu.Lock()
 	a.pending[state] = pendingAuth{Verifier: verifier, Next: next, Expires: time.Now().Add(pendingAuthTTL)}
 	a.mu.Unlock()
 	http.Redirect(w, r, a.authorizeURL(state, verifier), http.StatusFound)
+}
+
+// nextPathRe is the shape of a post-login destination: a same-site path of
+// letters, digits, '/', '_' and '-'. No backslash, dot, colon, '%', '?' or '#'.
+var nextPathRe = regexp.MustCompile(`^/[A-Za-z0-9/_-]*$`)
+
+// safeNext returns next when it is a safe same-site path to send a person to
+// after X login, and "" otherwise. A browser reads "/\evil.com" like
+// "//evil.com", another host, so only nextPathRe paths not starting "//" pass.
+func safeNext(next string) string {
+	if !nextPathRe.MatchString(next) || strings.HasPrefix(next, "//") {
+		return ""
+	}
+	return next
 }
 
 func (a *App) handleCallback(w http.ResponseWriter, r *http.Request) {

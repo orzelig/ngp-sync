@@ -72,3 +72,53 @@ func TestPostAuthRefusesLookalikeOrigin(t *testing.T) {
 		t.Errorf("exact origin: %d, want 303", rec.Code)
 	}
 }
+
+// /login keeps only a safe same-site next path: a browser reads "/\evil.com"
+// as "//evil.com", so it and its kin are dropped (no open redirect).
+func TestLoginNextIsNotAnOpenRedirect(t *testing.T) {
+	cases := map[string]string{
+		"/account":               "/account",
+		"/account/phone":         "/account/phone",
+		"":                       "",
+		"/\\evil.com":            "",
+		"\\/evil.com":            "",
+		"/\\/evil.com":           "",
+		"//evil.com":             "",
+		"///evil.com":            "",
+		"https://evil.com":       "",
+		"evil.com":               "",
+		"/%2f%2fevil.com":        "",
+		"/%5cevil.com":           "",
+		"/\tevil.com":            "",
+		"/account?x=//evil.com":  "",
+		"/account#//evil.com":    "",
+		"/..//evil.com":          "",
+		"/account\\..\\evil.com": "",
+	}
+	for in, want := range cases {
+		if got := safeNext(in); got != want {
+			t.Errorf("safeNext(%q) = %q, want %q", in, got, want)
+		}
+	}
+
+	e := newTestApp(t)
+	e.app.cfg.XClientID, e.app.cfg.XClientSecret = "cid", "csecret"
+	for in, want := range map[string]string{"/\\evil.com": "", "/account/phone": "/account/phone"} {
+		e.app.mu.Lock()
+		e.app.pending = map[string]pendingAuth{}
+		e.app.mu.Unlock()
+		rec := e.do(httptest.NewRequest("GET", "/login?next="+url.QueryEscape(in), nil))
+		if rec.Code != http.StatusFound {
+			t.Fatalf("/login next=%q: %d", in, rec.Code)
+		}
+		e.app.mu.Lock()
+		got := "unset"
+		for _, p := range e.app.pending {
+			got = p.Next
+		}
+		e.app.mu.Unlock()
+		if got != want {
+			t.Errorf("/login next=%q stored %q, want %q", in, got, want)
+		}
+	}
+}
