@@ -10,6 +10,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -104,14 +105,30 @@ func (a *App) checkCSRF(xid, token string) bool {
 	return token != "" && hmac.Equal([]byte(a.csrfToken(xid)), []byte(token))
 }
 
-// sameOrigin is a defense-in-depth check on state-changing POSTs: Origin (or
-// Referer, as a fallback) must be our own base URL.
+// sameOrigin is a defense-in-depth check on state-changing POSTs: Origin must
+// equal our base origin exactly (ADR 0006). With no Origin, the Referer's
+// scheme and host must equal it. Never a prefix test: https://id.ngp.one.evil.com
+// and https://id.ngp.one:8443 are other origins.
 func (a *App) sameOrigin(r *http.Request) bool {
-	o := r.Header.Get("Origin")
-	if o == "" {
-		o = r.Header.Get("Referer")
+	base := urlOrigin(a.cfg.BaseURL)
+	if base == "" {
+		return false
 	}
-	return o != "" && strings.HasPrefix(o, a.cfg.BaseURL)
+	if o := r.Header.Get("Origin"); o != "" {
+		return o == base
+	}
+	ref := r.Header.Get("Referer")
+	return ref != "" && urlOrigin(ref) == base
+}
+
+// urlOrigin is the lower-cased "scheme://host[:port]" of an absolute http(s)
+// URL, or "" when it is not one.
+func urlOrigin(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" || u.User != nil || (u.Scheme != "http" && u.Scheme != "https") {
+		return ""
+	}
+	return strings.ToLower(u.Scheme + "://" + u.Host)
 }
 
 // postAuth validates session + origin + CSRF for a state-changing POST and

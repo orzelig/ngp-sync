@@ -11,7 +11,6 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strings"
 	"sync"
 	"time"
 )
@@ -165,26 +164,6 @@ func (s *Store) RevokeAllDevices(xid string) (int, error) {
 	n := 0
 	for hash, rt := range s.Data.RefreshTokens {
 		if rt.XID == xid {
-			delete(s.Data.RefreshTokens, hash)
-			n++
-		}
-	}
-	if n == 0 {
-		return 0, nil
-	}
-	return n, s.save()
-}
-
-// RevokeDeviceByName removes every refresh token for xid whose device name
-// matches (case-insensitive, trimmed) — so removing a de-duplicated device
-// clears all of its tokens, including development duplicates. Returns the count.
-func (s *Store) RevokeDeviceByName(xid, name string) (int, error) {
-	target := strings.TrimSpace(name)
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	n := 0
-	for hash, rt := range s.Data.RefreshTokens {
-		if rt.XID == xid && strings.EqualFold(strings.TrimSpace(rt.Device), target) {
 			delete(s.Data.RefreshTokens, hash)
 			n++
 		}

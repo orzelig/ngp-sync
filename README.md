@@ -74,10 +74,13 @@ refresh token + a short-lived access JWT.
 |---------------------|-------------------------------------------------------------------|
 | `GET /login`        | redirects to X authorization                                      |
 | `GET /callback`     | X redirect target; shows a one-time device-link code (10 min, single use) |
-| `POST /device/link` | `{"code","device","ttl_days"?}` → `{account_id, refresh_token, access_token}`; `ttl_days` is ignored for phone codes; 429 after 10 failed codes a minute per client IP |
+| `POST /device/link` | `{"code","device","ttl_days"?}`. A browser code (from `/callback`, `/dev/enroll`) → 200 `{account_id, refresh_token, access_token}`. A phone code (from Add a phone) → 202 `{"status":"pending","poll_id","expires_in":300,"interval":2}` and no token until the account owner confirms (ADR 0006); `ttl_days` is ignored for it. 429 after 10 failed codes a minute per client IP |
+| `POST /device/link/poll` | `{"poll_id"}` → 200 `{"status":"pending"}`; 200 `{"status":"confirmed", account_id, refresh_token, access_token, …}` once, after which the ID is unknown; 403 `{"status":"cancelled"}` when cancelled or not confirmed within 5 minutes; 401 for an unknown ID |
 | `POST /token`       | `{"refresh_token","ttl_days"?}` → fresh access JWT                |
 | `GET /verify`       | `Authorization: Bearer <jwt>` → claims (same check go-sync does)  |
 | `POST /account/phone` | account page (session + CSRF, X login within 15 min, else via `/login?reauth=1` back to `GET /account/phone`): mints the account's one live phone code, replacing the earlier one, and shows it as a QR of `<BASE_URL>/pair?code=<code>` and as text |
+| `POST /account/device/confirm`, `/cancel` | account page (session + origin + CSRF), form field `id` = the pending ID: Confirm issues the phone's refresh token for the poll to collect; Cancel discards the request |
+| `POST /account/revoke` | account page (session + origin + CSRF), form field `id` = the device ID (the refresh token's hash): removes that one device |
 | `GET /pair`         | static page for camera apps: "open NGP on your phone and scan this code there"; never reads or spends a code |
 | `GET /me`           | `Authorization: Bearer <jwt>` → `{handle, name, avatar}` (`name` is the handle for now) |
 

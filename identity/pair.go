@@ -1,12 +1,15 @@
 package main
 
-// Adding NGP Phone to an account (ADR 0005). The phone joins through the same
-// one-time link code and POST /device/link as the browser:
+// Adding NGP Phone to an account (ADR 0005, ADR 0006). The phone joins through
+// the same one-time link code and POST /device/link as the browser, but a phone
+// code gets no token until the account owner confirms it (devicelink.go):
 //
 //   1. Account page  POST /account/phone  → page with the code as a QR and text
 //   2. Phone scans   <BASE_URL>/pair?code=<code>, takes the code, and calls
-//                    POST /device/link (unchanged) → refresh + access token
-//   3. Phone         GET /me (Bearer)      → who it is signed in as
+//                    POST /device/link → 202 pending with a poll ID
+//   3. Owner         Confirm on the account page; the phone's
+//                    POST /device/link/poll → refresh + access token, once
+//   4. Phone         GET /me (Bearer)      → who it is signed in as
 //
 // GET /pair is only what an ordinary camera app opens: a static instruction
 // page that never reads or spends a code.
@@ -332,6 +335,7 @@ var addPhoneTmpl = template.Must(template.New("add-phone").Parse(`<!doctype html
     {{if .QR}}{{.QR}}{{end}}
     <code class="big">{{.Code}}</code>
     <p class="note">On your phone, open <b>NGP</b>, go to <b>Settings</b>, <b>NGP account</b>, and scan this code. It works once and expires in 10 minutes.</p>
+    <p class="note">Then go back to your account and press <b>Confirm</b> next to your phone. It gets no access to your sync data until you do.</p>
   </div>
   <p class="back"><a href="/account">Back to your account</a></p>
 </div>

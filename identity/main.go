@@ -7,6 +7,8 @@ package main
 //   1. User opens  GET /login            → redirected to X, authorizes
 //   2. X calls     GET /callback         → page shows a one-time link code
 //   3. Browser     POST /device/link     {"code": "..."} → refresh + access token
+//      (a phone code from Add a phone gets a pending request instead, which the
+//      owner confirms on the account page; devicelink.go, ADR 0006)
 //   4. Browser     POST /token           {"refresh_token": "..."} → fresh access token
 //   5. Sync server verifies the JWT with the shared SYNC_JWT_SECRET
 //      (GET /verify here does the same check, for curl testing)
@@ -24,6 +26,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -62,6 +65,8 @@ type App struct {
 	pending   map[string]pendingAuth // OAuth state → PKCE verifier
 	linkCodes map[string]linkEntry   // one-time device-link codes
 	linkFails map[string]failWindow  // failed /device/link redemptions per client IP (pair.go)
+
+	pendingLinks map[string]pendingLink // phones awaiting the owner's Confirm, by hash of the poll ID (devicelink.go)
 }
 
 func envOr(key, def string) string {
@@ -99,6 +104,8 @@ func main() {
 		pending:   map[string]pendingAuth{},
 		linkCodes: map[string]linkEntry{},
 		linkFails: map[string]failWindow{},
+
+		pendingLinks: map[string]pendingLink{},
 	}
 	go app.janitor()
 
@@ -121,7 +128,8 @@ func main() {
 	mux.HandleFunc("POST /account/revoke", app.handleRevoke)
 	mux.HandleFunc("POST /account/revoke-all", app.handleRevokeAll)
 	mux.HandleFunc("POST /account/logout", app.handleLogout)
-	app.registerPairRoutes(mux) // add a phone: POST /account/phone, GET /pair, GET /me (pair.go)
+	app.registerPairRoutes(mux)       // add a phone: POST /account/phone, GET /pair, GET /me (pair.go)
+	app.registerDeviceLinkRoutes(mux) // the phone's poll, Confirm and Cancel (devicelink.go)
 
 	// Anonymous, hardened telemetry sink (see telemetry.go). Currently the
 	// opt-in settings-reset report the NGP browser POSTs. Decoupled from the
@@ -166,16 +174,27 @@ func (a *App) handleLogin(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "X_CLIENT_ID / X_CLIENT_SECRET are not configured yet", http.StatusServiceUnavailable)
 		return
 	}
-	next := r.URL.Query().Get("next")
-	if !strings.HasPrefix(next, "/") || strings.HasPrefix(next, "//") {
-		next = "" // only same-site absolute paths; no open redirects
-	}
+	next := safeNext(r.URL.Query().Get("next"))
 	state := randHex(16)
 	verifier := randHex(32) // 64 chars — within PKCE's 43–128 requirement
 	a.mu.Lock()
 	a.pending[state] = pendingAuth{Verifier: verifier, Next: next, Expires: time.Now().Add(pendingAuthTTL)}
 	a.mu.Unlock()
 	http.Redirect(w, r, a.authorizeURL(state, verifier), http.StatusFound)
+}
+
+// nextPathRe is the shape of a post-login destination: a same-site path of
+// letters, digits, '/', '_' and '-'. No backslash, dot, colon, '%', '?' or '#'.
+var nextPathRe = regexp.MustCompile(`^/[A-Za-z0-9/_-]*$`)
+
+// safeNext returns next when it is a safe same-site path to send a person to
+// after X login, and "" otherwise. A browser reads "/\evil.com" like
+// "//evil.com", another host, so only nextPathRe paths not starting "//" pass.
+func safeNext(next string) string {
+	if !nextPathRe.MatchString(next) || strings.HasPrefix(next, "//") {
+		return ""
+	}
+	return next
 }
 
 func (a *App) handleCallback(w http.ResponseWriter, r *http.Request) {
@@ -261,9 +280,11 @@ func (a *App) handleDeviceLink(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusUnauthorized, "invalid or expired code")
 		return
 	}
-	ttl := clampTTLDays(in.TTLDays)
 	if entry.Phone {
-		ttl = accessTokenTTL // phones renew with POST /token; ttl_days is ignored
+		// A phone code issues nothing until the owner confirms (ADR 0006).
+		// ttl_days is ignored: phones renew with POST /token.
+		a.startPendingLink(w, entry.XID, in.Device)
+		return
 	}
 
 	refresh, err := a.store.IssueRefreshToken(entry.XID, in.Device)
@@ -271,7 +292,7 @@ func (a *App) handleDeviceLink(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusInternalServerError, "storage error")
 		return
 	}
-	a.writeTokenResponseTTL(w, entry.XID, refresh, ttl)
+	a.writeTokenResponseTTL(w, entry.XID, refresh, clampTTLDays(in.TTLDays))
 }
 
 func (a *App) handleToken(w http.ResponseWriter, r *http.Request) {
@@ -324,10 +345,21 @@ func (a *App) mintAccessToken(xid string, ttl time.Duration) (string, error) {
 }
 
 func (a *App) writeTokenResponseTTL(w http.ResponseWriter, xid, refresh string, ttl time.Duration) {
-	tok, err := a.mintAccessToken(xid, ttl)
+	out, err := a.tokenResponse(xid, refresh, ttl)
 	if err != nil {
 		jsonError(w, http.StatusInternalServerError, "token mint failed")
 		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(out)
+}
+
+// tokenResponse is the body /device/link and /token answer with: a fresh
+// access token, the account, and refresh when it is not "".
+func (a *App) tokenResponse(xid, refresh string, ttl time.Duration) (map[string]any, error) {
+	tok, err := a.mintAccessToken(xid, ttl)
+	if err != nil {
+		return nil, err
 	}
 	out := map[string]any{
 		"account_id":   "x:" + xid,
@@ -348,8 +380,7 @@ func (a *App) writeTokenResponseTTL(w http.ResponseWriter, xid, refresh string, 
 	if refresh != "" {
 		out["refresh_token"] = refresh
 	}
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(out)
+	return out, nil
 }
 
 func (a *App) writeTokenResponse(w http.ResponseWriter, xid, refresh string) {
@@ -417,7 +448,8 @@ func (a *App) janitor() {
 				delete(a.pending, k)
 			}
 		}
-		a.dropExpiredLocked(now) // link codes and failure counters (pair.go)
+		a.dropExpiredLocked(now)      // link codes and failure counters (pair.go)
+		a.reapPendingLinksLocked(now) // pending phone requests (devicelink.go)
 		a.mu.Unlock()
 	}
 }
@@ -481,9 +513,9 @@ func handleDevAvatar(w http.ResponseWriter, _ *http.Request) {
 // ---- Account page (web-session gated; see session.go) --------------------
 
 type deviceView struct {
-	Name       string
-	RevokeName string
-	Created    string
+	ID      string // the refresh token's hash (store.go), the Remove target
+	Name    string
+	Created string
 }
 
 type accountView struct {
@@ -494,6 +526,7 @@ type accountView struct {
 	SyncOK    bool
 	SyncTotal int
 	Devices   []deviceView
+	Pending   []pendingView // phones awaiting Confirm (devicelink.go)
 	CSRF      string
 }
 
@@ -525,23 +558,15 @@ func (a *App) handleAccount(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Devices — collapse duplicates (one install per device; repeats are dev
-	// artifacts) by display name, newest first. Remove targets every token of
-	// that name.
-	seen := map[string]bool{}
+	// Devices: one row per refresh token, newest first, keyed by its ID. The
+	// name is display text the device chose; nothing merges or removes by it.
 	var devs []deviceView
 	for _, d := range a.store.ListDevices(xid) {
-		raw := strings.TrimSpace(d.Device)
-		disp := raw
-		if disp == "" {
-			disp = "NGP browser"
+		name := strings.TrimSpace(d.Device)
+		if name == "" {
+			name = "NGP browser"
 		}
-		key := strings.ToLower(disp)
-		if seen[key] {
-			continue
-		}
-		seen[key] = true
-		devs = append(devs, deviceView{Name: disp, RevokeName: raw, Created: d.Created.Format("Jan 2, 2006")})
+		devs = append(devs, deviceView{ID: d.ID, Name: name, Created: d.Created.Format("Jan 2, 2006")})
 	}
 
 	avatar := ""
@@ -561,6 +586,7 @@ func (a *App) handleAccount(w http.ResponseWriter, r *http.Request) {
 		SyncOK:    syncOK,
 		SyncTotal: total,
 		Devices:   devs,
+		Pending:   a.pendingLinksFor(xid, time.Now()),
 		CSRF:      a.csrfToken(xid),
 	})
 }
@@ -570,9 +596,9 @@ func (a *App) handleRevoke(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	// "name" is the device's raw name (may be empty — the unnamed-device
-	// bucket); revoke every token that shares it.
-	if _, err := a.store.RevokeDeviceByName(xid, r.PostForm.Get("name")); err != nil {
+	// "id" is the device's ID; RevokeDevice removes nothing unless it is one of
+	// this account's.
+	if _, err := a.store.RevokeDevice(xid, r.PostForm.Get("id")); err != nil {
 		http.Error(w, "storage error", http.StatusInternalServerError)
 		return
 	}
@@ -589,6 +615,7 @@ func (a *App) handleRevokeAll(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	a.dropLinkCodes(xid)
+	a.cancelPendingLinks(xid)
 	http.Redirect(w, r, "/account", http.StatusSeeOther)
 }
 
@@ -598,6 +625,7 @@ func (a *App) handleLogout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	a.dropLinkCodes(xid)
+	a.cancelPendingLinks(xid)
 	a.clearSession(w)
 	http.Redirect(w, r, "/login", http.StatusSeeOther)
 }
@@ -665,6 +693,29 @@ var accountTmpl = template.Must(template.New("account").Parse(`<!doctype html>
   <div class="card"><p class="note">Your data syncs through <b>sync.ngp.one</b>, encrypted in transit, and is managed in the NGP browser. With a sync passphrase set in the browser, we can&rsquo;t read it. Live item counts are temporarily unavailable.</p></div>
   {{end}}
 
+  {{if .Pending}}
+  <h2>Waiting for you to confirm ({{len .Pending}})</h2>
+  {{range .Pending}}
+  <div class="card row">
+    <div class="grow">
+      <div class="name">{{.Name}}</div>
+      <div class="meta">{{.Ago}}</div>
+    </div>
+    <form class="inline" method="post" action="/account/device/confirm">
+      <input type="hidden" name="csrf" value="{{$.CSRF}}">
+      <input type="hidden" name="id" value="{{.ID}}">
+      <button type="submit">Confirm</button>
+    </form>
+    <form class="inline" method="post" action="/account/device/cancel">
+      <input type="hidden" name="csrf" value="{{$.CSRF}}">
+      <input type="hidden" name="id" value="{{.ID}}">
+      <button class="link" type="submit">Cancel</button>
+    </form>
+  </div>
+  {{end}}
+  <p class="note sub">Confirm only a phone you are adding now. Until you confirm, it gets no access to your sync data.</p>
+  {{end}}
+
   <h2>Devices ({{len .Devices}})</h2>
   {{if .Devices}}
     {{range .Devices}}
@@ -675,7 +726,7 @@ var accountTmpl = template.Must(template.New("account").Parse(`<!doctype html>
       </div>
       <form class="inline" method="post" action="/account/revoke">
         <input type="hidden" name="csrf" value="{{$.CSRF}}">
-        <input type="hidden" name="name" value="{{.RevokeName}}">
+        <input type="hidden" name="id" value="{{.ID}}">
         <button class="link" type="submit">Remove</button>
       </form>
     </div>
