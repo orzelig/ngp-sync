@@ -55,6 +55,7 @@ func newTestApp(t *testing.T) *testEnv {
 	mux.HandleFunc("POST /account/logout", app.handleLogout)
 	mux.HandleFunc("GET /login", app.handleLogin)
 	app.registerPairRoutes(mux)
+	app.registerDeviceLinkRoutes(mux)
 	return &testEnv{t: t, app: app, mux: mux}
 }
 
@@ -122,17 +123,13 @@ func (e *testEnv) postJSON(path string, body any) *httptest.ResponseRecorder {
 	return e.do(req)
 }
 
+// link redeems a phone code, confirms it on the account page and collects the
+// token with the poll (ADR 0006).
 func (e *testEnv) link(code string) map[string]any {
 	e.t.Helper()
-	rec := e.postJSON("/device/link", map[string]string{"code": code, "device": testPhone})
-	if rec.Code != 200 {
-		e.t.Fatalf("POST /device/link: %d %s", rec.Code, rec.Body)
-	}
-	var out map[string]any
-	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
-		e.t.Fatal(err)
-	}
-	return out
+	pollID := e.redeemPending(code, testPhone)
+	e.confirm(hashToken(pollID))
+	return e.pollConfirmed(pollID)
 }
 
 func (e *testEnv) getBearer(path, token string) *httptest.ResponseRecorder {
@@ -318,7 +315,7 @@ func TestPhoneLinkMeAndRevoke(t *testing.T) {
 	if page := e.accountPage(); !strings.Contains(page, html.EscapeString(testPhone)) {
 		t.Fatal("phone not in the device list")
 	}
-	rec = e.postForm("/account/revoke", testBase, url.Values{"csrf": {e.app.csrfToken(testXID)}, "name": {testPhone}}, true)
+	rec = e.postForm("/account/revoke", testBase, url.Values{"csrf": {e.app.csrfToken(testXID)}, "id": {hashToken(refresh)}}, true)
 	if rec.Code != http.StatusSeeOther {
 		t.Fatalf("revoke: %d %s", rec.Code, rec.Body)
 	}
@@ -555,13 +552,20 @@ func TestLogoutAndRevokeAllDropCodes(t *testing.T) {
 // /device/link ignores ttl_days for a phone code; a browser code keeps it.
 func TestPhoneCodeIgnoresTTLDays(t *testing.T) {
 	e := newTestApp(t)
-	expiresIn := func(code string) float64 {
+	expiresIn := func(code string, phone bool) float64 {
 		rec := e.postJSON("/device/link", map[string]any{"code": code, "device": testPhone, "ttl_days": 90})
-		if rec.Code != 200 {
-			t.Fatalf("link: %d %s", rec.Code, rec.Body)
-		}
 		var out map[string]any
 		_ = json.Unmarshal(rec.Body.Bytes(), &out)
+		if phone {
+			if rec.Code != http.StatusAccepted {
+				t.Fatalf("link phone: %d %s", rec.Code, rec.Body)
+			}
+			pollID, _ := out["poll_id"].(string)
+			e.confirm(hashToken(pollID))
+			out = e.pollConfirmed(pollID)
+		} else if rec.Code != 200 {
+			t.Fatalf("link: %d %s", rec.Code, rec.Body)
+		}
 		tok, _ := out["access_token"].(string)
 		claims, err := VerifyJWT(e.app.cfg.JWTSecret, tok)
 		if err != nil {
@@ -573,10 +577,10 @@ func TestPhoneCodeIgnoresTTLDays(t *testing.T) {
 		}
 		return exp
 	}
-	if got := expiresIn(e.mintedCode()); got != accessTokenTTL.Seconds() {
+	if got := expiresIn(e.mintedCode(), true); got != accessTokenTTL.Seconds() {
 		t.Errorf("phone code with ttl_days 90: expires_in %v, want %v", got, accessTokenTTL.Seconds())
 	}
-	if got := expiresIn(e.app.mintLinkCode(testXID)); got != (90 * 24 * time.Hour).Seconds() {
+	if got := expiresIn(e.app.mintLinkCode(testXID), false); got != (90 * 24 * time.Hour).Seconds() {
 		t.Errorf("browser code with ttl_days 90: expires_in %v, want 90 days", got)
 	}
 }
@@ -615,9 +619,9 @@ func TestDeviceLinkFailureLimit(t *testing.T) {
 	if got := try("172.18.0.5:5000", "1.2.3.4, 203.0.113.7", code); got != http.StatusTooManyRequests {
 		t.Errorf("same client through Caddy: %d, want 429", got)
 	}
-	// Another client is unaffected and can redeem.
-	if got := try("172.18.0.5:5000", "203.0.113.7, 198.51.100.9", code); got != 200 {
-		t.Errorf("other client: %d, want 200", got)
+	// Another client is unaffected and can redeem (a phone code: 202 pending).
+	if got := try("172.18.0.5:5000", "203.0.113.7, 198.51.100.9", code); got != http.StatusAccepted {
+		t.Errorf("other client: %d, want 202", got)
 	}
 	// One IPv6 /64 is one client.
 	for i := 0; i < linkFailLimit; i++ {
