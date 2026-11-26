@@ -74,9 +74,12 @@ refresh token + a short-lived access JWT.
 |---------------------|-------------------------------------------------------------------|
 | `GET /login`        | redirects to X authorization                                      |
 | `GET /callback`     | X redirect target; shows a one-time device-link code (10 min, single use) |
-| `POST /device/link` | `{"code","device","ttl_days"?}` → `{account_id, refresh_token, access_token}` |
+| `POST /device/link` | `{"code","device","ttl_days"?}` → `{account_id, refresh_token, access_token}`; `ttl_days` is ignored for phone codes; 429 after 10 failed codes a minute per client IP |
 | `POST /token`       | `{"refresh_token","ttl_days"?}` → fresh access JWT                |
 | `GET /verify`       | `Authorization: Bearer <jwt>` → claims (same check go-sync does)  |
+| `POST /account/phone` | account page (session + CSRF, X login within 15 min, else via `/login?reauth=1` back to `GET /account/phone`): mints the account's one live phone code, replacing the earlier one, and shows it as a QR of `<BASE_URL>/pair?code=<code>` and as text |
+| `GET /pair`         | static page for camera apps: "open NGP on your phone and scan this code there"; never reads or spends a code |
+| `GET /me`           | `Authorization: Bearer <jwt>` → `{handle, name, avatar}` (`name` is the handle for now) |
 
 `ttl_days` (optional, clamped to 90) mints a long-lived access token — the
 browser patch reads one static token from a file and has no refresh loop yet.

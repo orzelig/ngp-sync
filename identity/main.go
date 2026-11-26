@@ -49,6 +49,7 @@ type Config struct {
 type linkEntry struct {
 	XID     string
 	Expires time.Time
+	Phone   bool // minted by Add a phone: one per account, default token lifetime (pair.go)
 }
 
 type App struct {
@@ -60,6 +61,7 @@ type App struct {
 	mu        sync.Mutex
 	pending   map[string]pendingAuth // OAuth state → PKCE verifier
 	linkCodes map[string]linkEntry   // one-time device-link codes
+	linkFails map[string]failWindow  // failed /device/link redemptions per client IP (pair.go)
 }
 
 func envOr(key, def string) string {
@@ -96,6 +98,7 @@ func main() {
 		dynamo:    newDynamoFromEnv(),
 		pending:   map[string]pendingAuth{},
 		linkCodes: map[string]linkEntry{},
+		linkFails: map[string]failWindow{},
 	}
 	go app.janitor()
 
@@ -118,6 +121,7 @@ func main() {
 	mux.HandleFunc("POST /account/revoke", app.handleRevoke)
 	mux.HandleFunc("POST /account/revoke-all", app.handleRevokeAll)
 	mux.HandleFunc("POST /account/logout", app.handleLogout)
+	app.registerPairRoutes(mux) // add a phone: POST /account/phone, GET /pair, GET /me (pair.go)
 
 	// Anonymous, hardened telemetry sink (see telemetry.go). Currently the
 	// opt-in settings-reset report the NGP browser POSTs. Decoupled from the
@@ -153,7 +157,8 @@ func (a *App) handleHome(w http.ResponseWriter, _ *http.Request) {
 }
 
 func (a *App) handleLogin(w http.ResponseWriter, r *http.Request) {
-	if xid := a.sessionXID(r); xid != "" {
+	// reauth=1 goes to X even when signed in: Add a phone needs a recent login.
+	if xid := a.sessionXID(r); xid != "" && r.URL.Query().Get("reauth") != "1" {
 		http.Redirect(w, r, "/account", http.StatusFound)
 		return
 	}
@@ -217,10 +222,7 @@ func (a *App) handleCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	deviceCode := randHex(4) // 8 hex chars, single-use, short-lived
-	a.mu.Lock()
-	a.linkCodes[deviceCode] = linkEntry{XID: xid, Expires: time.Now().Add(linkCodeTTL)}
-	a.mu.Unlock()
+	deviceCode := a.mintLinkCode(xid) // 8 hex chars, single-use, short-lived
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_ = linkPageTmpl.Execute(w, map[string]string{
@@ -244,14 +246,24 @@ func (a *App) handleDeviceLink(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	code := strings.ToLower(strings.TrimSpace(in.Code))
+	ip := linkClientIP(r)
+	if !a.linkAttemptAllowed(ip) { // checked before the code, so a guess spends nothing
+		jsonError(w, http.StatusTooManyRequests, "too many failed codes; try again in a minute")
+		return
+	}
 
 	a.mu.Lock()
 	entry, ok := a.linkCodes[code]
 	delete(a.linkCodes, code) // single use
 	a.mu.Unlock()
 	if !ok || time.Now().After(entry.Expires) {
+		a.noteLinkFailure(ip)
 		jsonError(w, http.StatusUnauthorized, "invalid or expired code")
 		return
+	}
+	ttl := clampTTLDays(in.TTLDays)
+	if entry.Phone {
+		ttl = accessTokenTTL // phones renew with POST /token; ttl_days is ignored
 	}
 
 	refresh, err := a.store.IssueRefreshToken(entry.XID, in.Device)
@@ -259,7 +271,7 @@ func (a *App) handleDeviceLink(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusInternalServerError, "storage error")
 		return
 	}
-	a.writeTokenResponseTTL(w, entry.XID, refresh, clampTTLDays(in.TTLDays))
+	a.writeTokenResponseTTL(w, entry.XID, refresh, ttl)
 }
 
 func (a *App) handleToken(w http.ResponseWriter, r *http.Request) {
@@ -292,19 +304,8 @@ func clampTTLDays(days int) time.Duration {
 }
 
 func (a *App) handleVerify(w http.ResponseWriter, r *http.Request) {
-	const prefix = "Bearer "
-	h := r.Header.Get("Authorization")
-	if !strings.HasPrefix(h, prefix) {
-		jsonError(w, http.StatusUnauthorized, "missing bearer token")
-		return
-	}
-	claims, err := VerifyJWT(a.cfg.JWTSecret, strings.TrimPrefix(h, prefix))
-	if err != nil {
-		jsonError(w, http.StatusUnauthorized, err.Error())
-		return
-	}
-	if claims.Aud != jwtAudience {
-		jsonError(w, http.StatusUnauthorized, "wrong audience")
+	claims, ok := a.bearerClaims(w, r)
+	if !ok {
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -398,10 +399,7 @@ func (a *App) handleDevEnroll(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	a.setSession(w, xid)
-	deviceCode := randHex(4)
-	a.mu.Lock()
-	a.linkCodes[deviceCode] = linkEntry{XID: xid, Expires: time.Now().Add(linkCodeTTL)}
-	a.mu.Unlock()
+	deviceCode := a.mintLinkCode(xid)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_ = linkPageTmpl.Execute(w, map[string]string{
 		"Username": "devuser",
@@ -419,11 +417,7 @@ func (a *App) janitor() {
 				delete(a.pending, k)
 			}
 		}
-		for k, v := range a.linkCodes {
-			if now.After(v.Expires) {
-				delete(a.linkCodes, k)
-			}
-		}
+		a.dropExpiredLocked(now) // link codes and failure counters (pair.go)
 		a.mu.Unlock()
 	}
 }
@@ -594,13 +588,16 @@ func (a *App) handleRevokeAll(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "storage error", http.StatusInternalServerError)
 		return
 	}
+	a.dropLinkCodes(xid)
 	http.Redirect(w, r, "/account", http.StatusSeeOther)
 }
 
 func (a *App) handleLogout(w http.ResponseWriter, r *http.Request) {
-	if _, ok := a.postAuth(w, r); !ok {
+	xid, ok := a.postAuth(w, r)
+	if !ok {
 		return
 	}
+	a.dropLinkCodes(xid)
 	a.clearSession(w)
 	http.Redirect(w, r, "/login", http.StatusSeeOther)
 }
@@ -661,11 +658,11 @@ var accountTmpl = template.Must(template.New("account").Parse(`<!doctype html>
   <div class="card list">
     {{range .Synced}}<div class="srow"><span class="sname">{{.Name}}</span><span class="scount">{{.Count}}</span></div>{{end}}
   </div>
-  <p class="note sub">Stored encrypted on <b>sync.ngp.one</b> and readable only in the NGP browser. Choose which types sync in the browser&rsquo;s <b>Settings</b>.</p>
+  <p class="note sub">Stored on <b>sync.ngp.one</b> and encrypted in transit. With a sync passphrase set in the browser, we can&rsquo;t read it. Choose which types sync in the browser&rsquo;s <b>Settings</b>.</p>
   {{else if .SyncOK}}
   <div class="card"><p class="note">Nothing is syncing yet. Open <b>id.ngp.one/login</b> in the NGP browser and click <b>Enable sync</b>.</p></div>
   {{else}}
-  <div class="card"><p class="note">Your data syncs through <b>sync.ngp.one</b> (encrypted in transit and at rest) and is managed in the NGP browser. Live item counts are temporarily unavailable.</p></div>
+  <div class="card"><p class="note">Your data syncs through <b>sync.ngp.one</b>, encrypted in transit, and is managed in the NGP browser. With a sync passphrase set in the browser, we can&rsquo;t read it. Live item counts are temporarily unavailable.</p></div>
   {{end}}
 
   <h2>Devices ({{len .Devices}})</h2>
@@ -686,6 +683,10 @@ var accountTmpl = template.Must(template.New("account").Parse(`<!doctype html>
   {{else}}
     <div class="card"><p class="note">No devices are linked yet. Open <b>id.ngp.one/login</b> in the NGP browser and click <b>Enable sync</b>.</p></div>
   {{end}}
+  <form class="actions" method="post" action="/account/phone">
+    <input type="hidden" name="csrf" value="{{.CSRF}}">
+    <button type="submit">Add a phone</button>
+  </form>
 
   <div class="actions">
     {{if .Devices}}
