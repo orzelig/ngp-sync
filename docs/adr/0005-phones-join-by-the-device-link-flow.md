@@ -19,7 +19,8 @@ not a display name.
 - **A phone joins through the same one-time link code and `POST /device/link`
   as the browser. There is no second pairing mechanism.** `POST /account/phone`
   (session, origin and CSRF checked by `postAuth`) mints the code with
-  `mintLinkCode`, the function `/callback` and `/dev/enroll` use too, and
+  `mintPhoneCode`, which shares `mintCode` with the `mintLinkCode` that
+  `/callback` and `/dev/enroll` use, and
   renders it on the page from the POST. The phone sends
   `{"code": "<code>", "device": "<phone model> · NGP Phone"}`; the request and
   response are unchanged.
@@ -35,6 +36,23 @@ not a display name.
   `/verify`, it does not check revocation: a removed phone's access token works
   until it expires, and the phone learns it was removed when `POST /token`
   returns 401.
+- **A phone code is guarded more tightly than the browser's** (zelig on
+  #17, 2026-11-26):
+  - An account has one live phone code. `mintPhoneCode` replaces the earlier
+    one. Every mint draws again on a collision, so it never overwrites another
+    account's code, and drops expired codes.
+  - Add a phone mints only within 15 minutes of an X login. The login time is
+    the session cookie's expiry minus `sessionTTL`, because the cookie is set
+    only at login. A staler session goes through `/login?reauth=1` and back
+    to `GET /account/phone`, a page that POSTs and never mints on a GET. The
+    30-day cookie alone cannot mint a device credential.
+  - Log out and Remove all devices delete the account's live codes.
+  - `POST /device/link` ignores `ttl_days` for a phone code, so phones get the
+    15-minute default and renew with `POST /token`.
+  - `POST /device/link` answers 429 after 10 failed codes a minute from one
+    client IP, before it looks at the code. The IP is the rightmost
+    `X-Forwarded-For` entry only from a loopback or private peer (Caddy), and
+    an IPv6 /64 counts as one client.
 - **The QR encoder is in-house** (`identity/qr.go`), limited to byte mode,
   error-correction level M and versions 1 to 6 (up to 106 bytes), drawn as an
   inline black-on-white SVG. A longer payload is an error, and the page falls

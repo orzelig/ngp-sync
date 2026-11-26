@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"html"
 	"net/http"
 	"net/http/httptest"
@@ -50,6 +51,9 @@ func newTestApp(t *testing.T) *testEnv {
 	mux.HandleFunc("GET /verify", app.handleVerify)
 	mux.HandleFunc("GET /account", app.handleAccount)
 	mux.HandleFunc("POST /account/revoke", app.handleRevoke)
+	mux.HandleFunc("POST /account/revoke-all", app.handleRevokeAll)
+	mux.HandleFunc("POST /account/logout", app.handleLogout)
+	mux.HandleFunc("GET /login", app.handleLogin)
 	app.registerPairRoutes(mux)
 	return &testEnv{t: t, app: app, mux: mux}
 }
@@ -60,8 +64,14 @@ func (e *testEnv) do(req *http.Request) *httptest.ResponseRecorder {
 	return rec
 }
 
+// sessionCookie is the cookie an X login sets now: it expires sessionTTL later.
 func (e *testEnv) sessionCookie() *http.Cookie {
-	return &http.Cookie{Name: sessionCookieName, Value: e.app.signSession(testXID, time.Now().Add(time.Hour).Unix())}
+	return e.sessionCookieAt(time.Now())
+}
+
+// sessionCookieAt is the cookie an X login at loginAt set.
+func (e *testEnv) sessionCookieAt(loginAt time.Time) *http.Cookie {
+	return &http.Cookie{Name: sessionCookieName, Value: e.app.signSession(testXID, loginAt.Add(sessionTTL).Unix())}
 }
 
 // postForm sends a signed-in (unless signedIn is false) form POST from origin.
@@ -361,6 +371,298 @@ func TestMeAvatarRule(t *testing.T) {
 		_ = json.Unmarshal(e.getBearer("/me", tok).Body.Bytes(), &me)
 		if got, ok := me["avatar"]; !ok || got != want {
 			t.Errorf("xid %s: avatar = %q (present %v), want %q", xid, got, ok, want)
+		}
+	}
+}
+
+// ---- Round 2 (zelig on #17): one phone code per account, recent login,
+// codes dropped on log out and remove all, phone lifetime, failure limit.
+
+func (e *testEnv) entry(code string) (linkEntry, bool) {
+	e.app.mu.Lock()
+	defer e.app.mu.Unlock()
+	v, ok := e.app.linkCodes[code]
+	return v, ok
+}
+
+// A new Add a phone replaces the account's earlier phone code; a browser code
+// of the same account and another account's phone code stay.
+func TestPhoneCodeReplacesEarlier(t *testing.T) {
+	e := newTestApp(t)
+	browser := e.app.mintLinkCode(testXID)
+	other := e.app.mintPhoneCode("other")
+	first := e.mintedCode()
+	second := e.mintedCode()
+	if first == second {
+		t.Fatalf("same code twice: %s", first)
+	}
+	if _, ok := e.entry(first); ok {
+		t.Errorf("earlier phone code %s is still live", first)
+	}
+	if v, ok := e.entry(second); !ok || !v.Phone || v.XID != testXID {
+		t.Errorf("new phone code %s: %+v %v", second, v, ok)
+	}
+	if v, ok := e.entry(browser); !ok || v.Phone {
+		t.Errorf("browser code %s: %+v %v", browser, v, ok)
+	}
+	if v, ok := e.entry(other); !ok || v.XID != "other" {
+		t.Errorf("other account's code %s: %+v %v", other, v, ok)
+	}
+	if got := e.codes(); len(got) != 3 {
+		t.Errorf("codes = %v, want 3", got)
+	}
+	if rec := e.postJSON("/device/link", map[string]string{"code": first, "device": testPhone}); rec.Code != 401 {
+		t.Errorf("replaced code redeemed: %d %s", rec.Code, rec.Body)
+	}
+}
+
+// A random collision draws again and never overwrites another account's code.
+func TestMintCodeCollisionDrawsAgain(t *testing.T) {
+	e := newTestApp(t)
+	taken := linkEntry{XID: "other", Expires: time.Now().Add(linkCodeTTL), Phone: true}
+	e.app.linkCodes["aaaaaaaa"] = taken
+	draws := []string{"aaaaaaaa", "aaaaaaaa", "bbbbbbbb"}
+	saved := newLinkCode
+	t.Cleanup(func() { newLinkCode = saved })
+	newLinkCode = func() string { c := draws[0]; draws = draws[1:]; return c }
+
+	if got := e.app.mintPhoneCode(testXID); got != "bbbbbbbb" {
+		t.Errorf("minted %q, want the third draw bbbbbbbb", got)
+	}
+	if v, _ := e.entry("aaaaaaaa"); v != taken {
+		t.Errorf("other account's code overwritten: %+v", v)
+	}
+	draws = []string{"bbbbbbbb", "cccccccc"}
+	if got := e.app.mintLinkCode("third"); got != "cccccccc" {
+		t.Errorf("browser mint %q, want cccccccc", got)
+	}
+	if v, _ := e.entry("bbbbbbbb"); v.XID != testXID {
+		t.Errorf("phone code overwritten by a browser mint: %+v", v)
+	}
+}
+
+// Minting drops expired codes, so linkCodes cannot grow without bound.
+func TestMintDropsExpiredCodes(t *testing.T) {
+	e := newTestApp(t)
+	past := time.Now().Add(-time.Second)
+	for i, xid := range []string{"a", "b", "c"} {
+		e.app.linkCodes[strings.Repeat(string(rune('0'+i)), 8)] = linkEntry{XID: xid, Expires: past}
+	}
+	code := e.mintedCode()
+	if got := e.codes(); len(got) != 1 || got[0] != code {
+		t.Errorf("codes = %v, want only %s", got, code)
+	}
+}
+
+// Add a phone mints only within 15 minutes of an X login; otherwise it sends
+// the person through X login and back to Add a phone.
+func TestAddPhoneNeedsRecentLogin(t *testing.T) {
+	e := newTestApp(t)
+	e.app.cfg.XClientID, e.app.cfg.XClientSecret = "cid", "csecret"
+	csrf := url.Values{"csrf": {e.app.csrfToken(testXID)}}
+
+	post := func(loginAt time.Time) *httptest.ResponseRecorder {
+		req := httptest.NewRequest("POST", "/account/phone", strings.NewReader(csrf.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.Header.Set("Origin", testBase)
+		req.AddCookie(e.sessionCookieAt(loginAt))
+		return e.do(req)
+	}
+	get := func(path string, loginAt time.Time) *httptest.ResponseRecorder {
+		req := httptest.NewRequest("GET", path, nil)
+		req.AddCookie(e.sessionCookieAt(loginAt))
+		return e.do(req)
+	}
+
+	stale := time.Now().Add(-16 * time.Minute)
+	if rec := post(stale); rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != addPhoneLogin {
+		t.Errorf("stale POST: %d Location %q", rec.Code, rec.Header().Get("Location"))
+	}
+	if got := e.codes(); len(got) != 0 {
+		t.Fatalf("a stale session minted %v", got)
+	}
+	// A 30-day cookie set 29 days ago is good for the account page, not for minting.
+	if rec := post(time.Now().Add(-29 * 24 * time.Hour)); rec.Code != http.StatusSeeOther || len(e.codes()) != 0 {
+		t.Errorf("old session: %d, codes %v", rec.Code, e.codes())
+	}
+
+	// /login?reauth=1 goes to X even with a session; plain /login still goes to /account.
+	if rec := get(addPhoneLogin, stale); rec.Code != http.StatusFound || !strings.HasPrefix(rec.Header().Get("Location"), xAuthorizeURL) {
+		t.Errorf("reauth login: %d Location %q", rec.Code, rec.Header().Get("Location"))
+	}
+	e.app.mu.Lock()
+	var next string
+	for _, p := range e.app.pending {
+		next = p.Next
+	}
+	e.app.mu.Unlock()
+	if next != "/account/phone" {
+		t.Errorf("after X login the person goes to %q, want /account/phone", next)
+	}
+	if rec := get("/login", stale); rec.Header().Get("Location") != "/account" {
+		t.Errorf("plain /login with a session: Location %q", rec.Header().Get("Location"))
+	}
+
+	// Back from X: GET /account/phone shows one CSRF form and mints nothing.
+	rec := get("/account/phone", time.Now())
+	body := rec.Body.String()
+	if rec.Code != 200 || !strings.Contains(body, `action="/account/phone"`) || !strings.Contains(body, html.EscapeString(e.app.csrfToken(testXID))) {
+		t.Errorf("GET /account/phone after login: %d %s", rec.Code, body)
+	}
+	if got := e.codes(); len(got) != 0 {
+		t.Errorf("GET minted %v", got)
+	}
+	if rec := get("/account/phone", stale); rec.Code != http.StatusFound || rec.Header().Get("Location") != addPhoneLogin {
+		t.Errorf("stale GET: %d Location %q", rec.Code, rec.Header().Get("Location"))
+	}
+	signedOut := e.do(httptest.NewRequest("GET", "/account/phone", nil))
+	if signedOut.Code != http.StatusFound || !strings.HasPrefix(signedOut.Header().Get("Location"), "/login") {
+		t.Errorf("signed-out GET: %d Location %q", signedOut.Code, signedOut.Header().Get("Location"))
+	}
+
+	// Within the window the POST mints.
+	if rec := post(time.Now().Add(-14 * time.Minute)); rec.Code != 200 || len(e.codes()) != 1 {
+		t.Errorf("recent POST: %d, codes %v", rec.Code, e.codes())
+	}
+}
+
+// Log out and Remove all devices delete the account's live codes, and only
+// that account's.
+func TestLogoutAndRevokeAllDropCodes(t *testing.T) {
+	for _, path := range []string{"/account/logout", "/account/revoke-all"} {
+		e := newTestApp(t)
+		phone := e.mintedCode()
+		browser := e.app.mintLinkCode(testXID)
+		other := e.app.mintPhoneCode("other")
+		rec := e.postForm(path, testBase, url.Values{"csrf": {e.app.csrfToken(testXID)}}, true)
+		if rec.Code != http.StatusSeeOther {
+			t.Fatalf("%s: %d %s", path, rec.Code, rec.Body)
+		}
+		for _, c := range []string{phone, browser} {
+			if _, ok := e.entry(c); ok {
+				t.Errorf("%s: code %s is still live", path, c)
+			}
+		}
+		if _, ok := e.entry(other); !ok {
+			t.Errorf("%s: dropped another account's code", path)
+		}
+		if rec := e.postJSON("/device/link", map[string]string{"code": phone, "device": testPhone}); rec.Code != 401 {
+			t.Errorf("%s: phone code redeemed afterwards: %d", path, rec.Code)
+		}
+	}
+}
+
+// /device/link ignores ttl_days for a phone code; a browser code keeps it.
+func TestPhoneCodeIgnoresTTLDays(t *testing.T) {
+	e := newTestApp(t)
+	expiresIn := func(code string) float64 {
+		rec := e.postJSON("/device/link", map[string]any{"code": code, "device": testPhone, "ttl_days": 90})
+		if rec.Code != 200 {
+			t.Fatalf("link: %d %s", rec.Code, rec.Body)
+		}
+		var out map[string]any
+		_ = json.Unmarshal(rec.Body.Bytes(), &out)
+		tok, _ := out["access_token"].(string)
+		claims, err := VerifyJWT(e.app.cfg.JWTSecret, tok)
+		if err != nil {
+			t.Fatal(err)
+		}
+		exp, _ := out["expires_in"].(float64)
+		if got := float64(claims.Exp - claims.Iat); got != exp {
+			t.Errorf("token lifetime %vs disagrees with expires_in %v", got, exp)
+		}
+		return exp
+	}
+	if got := expiresIn(e.mintedCode()); got != accessTokenTTL.Seconds() {
+		t.Errorf("phone code with ttl_days 90: expires_in %v, want %v", got, accessTokenTTL.Seconds())
+	}
+	if got := expiresIn(e.app.mintLinkCode(testXID)); got != (90 * 24 * time.Hour).Seconds() {
+		t.Errorf("browser code with ttl_days 90: expires_in %v, want 90 days", got)
+	}
+}
+
+// /device/link answers 429 after 10 failed codes a minute from one client,
+// without spending a valid code; other clients are not affected.
+func TestDeviceLinkFailureLimit(t *testing.T) {
+	e := newTestApp(t)
+	try := func(remote, xff, code string) int {
+		b, _ := json.Marshal(map[string]string{"code": code, "device": "x"})
+		req := httptest.NewRequest("POST", "/device/link", strings.NewReader(string(b)))
+		req.RemoteAddr = remote
+		if xff != "" {
+			req.Header.Set("X-Forwarded-For", xff)
+		}
+		return e.do(req).Code
+	}
+	const attacker = "203.0.113.7:4000"
+	for i := 0; i < linkFailLimit; i++ {
+		if got := try(attacker, "", "00000000"); got != 401 {
+			t.Fatalf("failure %d: %d, want 401", i+1, got)
+		}
+	}
+	code := e.mintedCode()
+	if got := try(attacker, "", code); got != http.StatusTooManyRequests {
+		t.Errorf("after %d failures: %d, want 429", linkFailLimit, got)
+	}
+	if _, ok := e.entry(code); !ok {
+		t.Fatal("a refused attempt spent the code")
+	}
+	// A forged X-Forwarded-For from a public peer does not change the client.
+	if got := try(attacker, "198.51.100.1", code); got != http.StatusTooManyRequests {
+		t.Errorf("forged X-Forwarded-For: %d, want 429", got)
+	}
+	// Behind Caddy (a private peer) the client is the rightmost X-Forwarded-For entry.
+	if got := try("172.18.0.5:5000", "1.2.3.4, 203.0.113.7", code); got != http.StatusTooManyRequests {
+		t.Errorf("same client through Caddy: %d, want 429", got)
+	}
+	// Another client is unaffected and can redeem.
+	if got := try("172.18.0.5:5000", "203.0.113.7, 198.51.100.9", code); got != 200 {
+		t.Errorf("other client: %d, want 200", got)
+	}
+	// One IPv6 /64 is one client.
+	for i := 0; i < linkFailLimit; i++ {
+		try(fmt.Sprintf("[2001:db8:1:2::%x]:443", i+1), "", "00000000")
+	}
+	if got := try("[2001:db8:1:2::ffff]:443", "", "00000000"); got != http.StatusTooManyRequests {
+		t.Errorf("IPv6 /64: %d, want 429", got)
+	}
+	// The window ends: the janitor's sweep forgets it, and the client may try again.
+	e.app.mu.Lock()
+	for k, v := range e.app.linkFails {
+		v.Start = v.Start.Add(-linkFailWindow)
+		e.app.linkFails[k] = v
+	}
+	e.app.dropExpiredLocked(time.Now())
+	left := len(e.app.linkFails)
+	e.app.mu.Unlock()
+	if left != 0 {
+		t.Errorf("%d failure windows left after the sweep", left)
+	}
+	if got := try(attacker, "", "00000000"); got != 401 {
+		t.Errorf("after the window: %d, want 401", got)
+	}
+}
+
+// The account page claims no more about sync data than privacy.html does.
+func TestAccountSyncNoteMatchesPrivacy(t *testing.T) {
+	for _, v := range []accountView{
+		{Username: "alice", SyncOK: true, SyncTotal: 1, Synced: []TypeCount{{Name: "Bookmarks", Count: 1}}},
+		{Username: "alice", SyncOK: false},
+	} {
+		var b strings.Builder
+		if err := accountTmpl.Execute(&b, v); err != nil {
+			t.Fatal(err)
+		}
+		page := b.String()
+		for _, bad := range []string{"readable only", "at rest"} {
+			if strings.Contains(page, bad) {
+				t.Errorf("SyncOK=%v: the page says %q", v.SyncOK, bad)
+			}
+		}
+		for _, want := range []string{"encrypted in transit", "With a sync passphrase set in the browser, we can&rsquo;t read it."} {
+			if !strings.Contains(page, want) {
+				t.Errorf("SyncOK=%v: the page lacks %q", v.SyncOK, want)
+			}
 		}
 	}
 }

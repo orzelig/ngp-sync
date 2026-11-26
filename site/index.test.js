@@ -365,7 +365,8 @@ test('privacy.html: says what NGP Phone shares when it joins the account', () =>
   const item = [...src.matchAll(/<li>([\s\S]*?)<\/li>/g)].map((m) => m[1].replace(/\s+/g, ' '))
     .find((li) => li.includes('NGP Phone'));
   assert.ok(item, 'a "What we collect" item names NGP Phone');
-  for (const phrase of ['device name', 'sign-in tokens', 'Nothing else from the phone reaches ngp.one']) {
+  for (const phrase of ['device name', 'sign-in tokens', 'turn on sync on the phone',
+    'reads your synced data from sync.ngp.one', 'sends its device info']) {
     assert.ok(item.includes(phrase), `the NGP Phone item says "${phrase}"`);
   }
 });
